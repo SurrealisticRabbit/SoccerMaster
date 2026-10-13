@@ -4,7 +4,6 @@ import torch
 import cv2
 import zipfile
 import pickle
-from sam2.build_sam import build_sam2_video_predictor
 from collections import defaultdict
 from tqdm import tqdm
 import argparse
@@ -14,7 +13,7 @@ import traceback
 import time
 import multiprocessing
 from multiprocessing import Pool, Manager
-from utils import (
+from soccermaster.refine.utils import (
     apply_mask_to_image,
     draw_box_with_id,
     load_tracklets_for_video, load_video_frames,
@@ -352,7 +351,9 @@ def process_single_video(video_id, args, gpu_id, progress_manager, result_collec
         torch.cuda.set_device(gpu_id)
         os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
         
-        # Build SAM2 predictor
+        # Build SAM2 predictor (SAM 2 is an optional dependency)
+        from soccermaster.refine import build_sam2_video_predictor
+
         predictor = build_sam2_video_predictor(args.sam_config, args.sam_checkpoint, device=f"cuda:{gpu_id}")
         
         print(f"[GPU {gpu_id}] Starting to process video: {video_id}")

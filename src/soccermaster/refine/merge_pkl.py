@@ -2,7 +2,7 @@ import os
 import pickle
 import json
 import argparse
-from utils import (
+from soccermaster.refine.utils import (
     generate_refined_pklz,
 )
 
