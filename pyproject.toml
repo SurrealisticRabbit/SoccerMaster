@@ -60,6 +60,9 @@ soccermaster = "soccermaster.cli:main"
 [project.entry-points."hydra.plugins.search_path_plugin"]
 soccermaster = "soccermaster.tracking.searchpath_plugin:SoccerMasterSearchPathPlugin"
 
+[project.entry-points.soccermaster_plugin]
+soccermaster = "soccermaster.gamestate.config_finder:ConfigFinder"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
