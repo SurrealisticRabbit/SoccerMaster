@@ -52,7 +52,7 @@ experiment_name: "gsr"
 experiment_subname: "step_3_sn500_10001_10002"
 
 # Path definitions
-home_dir: "${oc.env:HOME}"
+home_dir: "${oc.env:HOME,}"
 data_dir: "${project_dir}/datasets"
 model_dir: "${project_dir}/pretrained_models"
 

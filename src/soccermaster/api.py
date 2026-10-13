@@ -70,8 +70,15 @@ def load_config(name: str = "pretrain") -> dict:
     weights = paths.weights_dir()
     for key in ("CKPT_PATH", "TEXT_ENCODER_CKPT_PATH"):
         value = cfg.get(key)
-        if value:
-            cfg[key] = str(weights / Path(value).relative_to(Path(value).anchor or "."))
+        if not value:
+            continue
+        candidate = Path(value)
+        if candidate.is_absolute():
+            continue
+        parts = [p for p in candidate.parts if p not in (".", "..")]
+        if parts and parts[0] in ("pretrained_models", "weights"):
+            parts = parts[1:]
+        cfg[key] = str(weights.joinpath(*parts))
     return cfg
 
 

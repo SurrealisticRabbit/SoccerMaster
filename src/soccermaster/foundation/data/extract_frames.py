@@ -252,8 +252,9 @@ Examples:
         help='Tar file paths (one or more, extracts directly from tar)'
     )
     parser.add_argument(
-        '--output_dir', type=str, required=True,
-        help='Output directory for restored image sequences'
+        '--output_dir', type=str, default=None,
+        help='Output directory for restored image sequences '
+             '(default: <data_dir>/SoccerNetGS/sn500)'
     )
     parser.add_argument(
         '--quality', type=int, default=95,
@@ -276,10 +277,16 @@ Examples:
         print("Error: must specify either --video_dir or --tar_files")
         sys.exit(1)
 
+    output_dir = args.output_dir
+    if output_dir is None:
+        from soccermaster import paths
+
+        output_dir = str(paths.data_dir() / "SoccerNetGS" / "sn500")
+
     if args.video_dir:
-        process_video_dir(args.video_dir, args.output_dir, quality=args.quality)
+        process_video_dir(args.video_dir, output_dir, quality=args.quality)
     else:
-        process_tar_files(args.tar_files, args.output_dir, quality=args.quality)
+        process_tar_files(args.tar_files, output_dir, quality=args.quality)
 
 
 if __name__ == '__main__':

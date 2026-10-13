@@ -3,12 +3,12 @@ import torch
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+from soccermaster import paths
+from soccermaster.api import load_config
 from soccermaster.foundation.models.multi_task import MultiTaskingModel
-from soccermaster.foundation.configs.util import load_super_config, yaml_to_dict
 
 # ─── 路径配置 ────────────────────────────────────────────────────────────────
-CONFIG_PATH      = "./configs/pretrain.yaml"
-CHECKPOINT_DIR   = "./pretrained_models/SoccerMaster"
+CHECKPOINT_DIR   = str(paths.weights_dir() / "SoccerMaster")
 DEVICE           = "cuda" if torch.cuda.is_available() else "cpu"
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -67,8 +67,7 @@ def print_outputs(outputs: dict):
 
 
 def main():
-    cfg = yaml_to_dict(CONFIG_PATH)
-    cfg = load_super_config(cfg, cfg.get("SUPER_CONFIG_PATH"))
+    cfg = load_config("pretrain")
 
     model = MultiTaskingModel(config=cfg)
     model.load_checkpoint(CHECKPOINT_DIR, logger=None, load_heads=True)
