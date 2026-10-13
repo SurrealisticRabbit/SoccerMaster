@@ -57,6 +57,9 @@ dev = [
 [project.scripts]
 soccermaster = "soccermaster.cli:main"
 
+[project.entry-points."hydra.plugins.search_path_plugin"]
+soccermaster = "soccermaster.tracking.searchpath_plugin:SoccerMasterSearchPathPlugin"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

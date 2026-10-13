@@ -1,0 +1,19 @@
+_target_: soccermaster.tracking.visualization.VisualizationEngine
+save_videos: True
+visualizers:
+  test:
+    _target_: soccermaster.tracking.visualization.DefaultDetectionVisualizer
+#  ellipse:
+#    _target_: tracklab.visualization.EllipseDetectionVisualizer
+  track_line:
+    _target_: soccermaster.tracking.visualization.TrackingLineVisualizer
+
+colors:
+  bbox:
+    no_id: [0,0,0]
+    prediction: null
+    ground_truth: [0,0,0]
+  text:
+    no_id: [0,0,0]
+    prediction: null
+    ground_truth: [0,0,0]

@@ -1,0 +1,6 @@
+defaults:
+  - default
+
+_target_: soccermaster.tracking.wrappers.ExternalVideo
+
+video_path: "/path/to/video.mp4"

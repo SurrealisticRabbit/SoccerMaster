@@ -1,0 +1,3 @@
+_target_: soccermaster.tracking.wrappers.MajorityVoteTracklet
+cfg:
+  attributes: []
