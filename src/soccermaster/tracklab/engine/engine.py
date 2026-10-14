@@ -17,6 +17,28 @@ from soccermaster.tracklab.datastruct import TrackerState
 
 
 def merge_dataframes(main_df, appended_piece):
+    """Fold a piece of detections into the accumulated frame, appended values winning.
+
+    Implemented with ``combine_first`` rather than the original
+    ``loc[...] = np.nan`` + ``DataFrame.update`` sequence, which pandas 3 rejects.
+
+    The old form seeded new columns and rows with ``np.nan`` and then called ``update``.
+    Seeding with NaN forces those columns to ``float64``, and ``update`` will not write a
+    string into a float column::
+
+        TypeError: Invalid value '['610004000001']' for dtype 'float64'
+
+    That is not hypothetical -- it is what happened on the first run against real
+    footage, because the tracker emits string track ids ('<video><track>') alongside
+    numeric boxes, and ``merge_dataframes`` runs on every batch. Older pandas upcast
+    silently; pandas 3 raises, and ``pyproject.toml`` pins only ``pandas>=2.0``.
+
+    ``combine_first`` keeps the semantics that matter: values from ``appended_piece``
+    win where present, ``NaN`` in ``appended_piece`` leaves ``main_df`` untouched, new
+    rows and columns are added, and dtypes are inferred from the data instead of being
+    forced by the NaN seed. Column order is restored to main's-then-new, which
+    ``update`` also gave.
+    """
     # Convert appended_piece to a DataFrame if it's not already
     if isinstance(appended_piece, pd.Series):
         appended_piece = pd.DataFrame(appended_piece).T
@@ -28,18 +50,12 @@ def merge_dataframes(main_df, appended_piece):
         else:
             appended_piece = pd.DataFrame()
 
-    # Append the columns of the df
-    new_columns = appended_piece.columns.difference(main_df.columns)
-    main_df.loc[:, new_columns] = np.nan
+    if appended_piece.empty and main_df.empty:
+        return main_df
 
-    # Append the rows of the df
-    new_index = set(appended_piece.index).difference(main_df.index)
-    for index in new_index:
-        main_df.loc[index] = np.nan
-
-    # Update all the values (appended_piece overrides)
-    main_df.update(appended_piece)
-    return main_df
+    combined = appended_piece.combine_first(main_df)
+    order = main_df.columns.append(appended_piece.columns.difference(main_df.columns))
+    return combined.reindex(columns=order)
 
 
 class TrackingEngine(ABC):
