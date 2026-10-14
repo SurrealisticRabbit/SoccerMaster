@@ -25,6 +25,30 @@ Videos live in the ``soccermaster-videos`` volume rather than being baked into t
 so a large clip is downloaded once instead of re-uploaded into the image on every run.
 ``--cmd fetch`` pulls the exported data back into ``./modal-outputs``.
 
+Getting around a slow Origin
+---------------------------
+Two checkpoints are fetched lazily rather than by ``prepare``: the ReID weights and the
+calibration sets. They come from Zenodo, which serves a Modal container at roughly
+110 KB/s -- about 20x slower than the same URL from a laptop -- so a 396 MB checkpoint is
+nearly an hour and the connection tends to drop part-way. The downloader resumes and
+retries, so it does eventually finish, but the fastest route is to fetch it once locally
+and push it into the volume::
+
+    curl -L -o prtreid-soccernet-baseline.pth.tar \\
+      "https://zenodo.org/records/10653453/files/prtreid-soccernet-baseline.pth.tar?download=1"
+    curl -L -o hrnetv2_w32_imagenet_pretrained.pth \\
+      "https://zenodo.org/records/10604211/files/hrnetv2_w32_imagenet_pretrained.pth?download=1"
+    modal volume put soccermaster-weights prtreid-soccernet-baseline.pth.tar /reid/
+    modal volume put soccermaster-weights hrnetv2_w32_imagenet_pretrained.pth /reid/
+
+The pipeline accepts them only if they verify: ``download_file`` checks
+``prtreid-soccernet-baseline.pth.tar`` against md5 ``9633825232bc89f23a94522c5561650e`` and
+``hrnetv2_w32_imagenet_pretrained.pth`` against ``58ea12b0420aa3adaa2f74114c9f9721``, and
+refetches anything that does not match. Check locally first with ``md5sum``/``certutil``.
+
+``--cmd net`` measures throughput from the container per host, which distinguishes a slow
+origin from a slow container.
+
 ``doctor`` has been run against the real app. The rest has not, so expect to fix one or
 two things on first use.
 """
@@ -56,10 +80,10 @@ REPO = "https://github.com/SurrealisticRabbit/SoccerMaster.git"
 #: uploaded from local disk on every run, so edits here take effect immediately.
 #: Bump this when anything under ``src/`` changes, or the image keeps serving the old
 #: package: Modal caches layers by definition string and this is what makes it specific.
-#: Current value carries the weight-cache self-heal: downloads land in ``.part`` files and
-#: are moved into place only once verified, so an interrupted run can no longer leave a
-#: truncated checkpoint that fails its md5 check forever after.
-REF = "93b8d86a420f682945a68ab71b53ba8d28c4e358"
+#: Current value carries the download resilience work: the weight downloads resume and
+#: retry, because Zenodo serves a Modal container at ~110 KB/s and the connection drops
+#: mid-transfer.
+REF = "3739b922459847c0611ad5598566f30d5df6fbac"
 
 #: Local directory the exported data is written back to by ``--cmd fetch``.
 LOCAL_OUTPUT_DIR = Path("modal-outputs")
@@ -213,6 +237,64 @@ def gpu_check() -> dict:
     the GPU-attached counterpart. It costs a few seconds of GPU time.
     """
     return describe_gpu()
+
+
+@app.function(image=image, volumes=VOLUMES, env=ENV, timeout=600)
+def net_check(megabytes: float = 20.0) -> dict:
+    """Measure download throughput from this container, per host.
+
+    Throughput from a Modal container is not the same as throughput from a laptop, and
+    "it is downloading at KB/s" has two very different explanations: the remote host is
+    throttling us, or this container's route to it is poor. Downloading a fixed number of
+    bytes from several hosts distinguishes them -- if Zenodo is slow here while a control
+    host is fast, it is Zenodo (or our path specifically to it), not the container.
+
+    Costs no GPU. Uses ranged requests so it stops after the requested size.
+    """
+    import time
+
+    import requests
+
+    targets = {
+        # The two checkpoints the pipeline fetches on first use.
+        "zenodo/prtreid": "https://zenodo.org/records/10653453/files/"
+        "prtreid-soccernet-baseline.pth.tar?download=1",
+        "zenodo/hrnet": "https://zenodo.org/records/10604211/files/"
+        "hrnetv2_w32_imagenet_pretrained.pth?download=1",
+        # Controls: the same infrastructure that already served the weights quickly.
+        "huggingface": "https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct/resolve/main/"
+        "config.json",
+        "pypi": "https://files.pythonhosted.org/packages/source/r/requests/"
+        "requests-2.32.3.tar.gz",
+    }
+
+    wanted = int(megabytes * 1e6)
+    results: dict = {}
+
+    for name, url in targets.items():
+        try:
+            started = time.time()
+            got = 0
+            with requests.get(
+                url, stream=True, timeout=(15, 60), headers={"Range": f"bytes=0-{wanted - 1}"}
+            ) as response:
+                if response.status_code not in (200, 206):
+                    results[name] = f"HTTP {response.status_code}"
+                    continue
+                for chunk in response.iter_content(chunk_size=1 << 20):
+                    got += len(chunk)
+                    if got >= wanted:
+                        break
+            elapsed = time.time() - started
+            results[name] = {
+                "mb_downloaded": round(got / 1e6, 2),
+                "seconds": round(elapsed, 2),
+                "mb_per_sec": round((got / 1e6) / elapsed, 2) if elapsed else None,
+            }
+        except Exception as exc:  # noqa: BLE001 - a failure here is a result too
+            results[name] = f"{type(exc).__name__}: {exc}"
+
+    return {"requested_mb": megabytes, "throughput": results}
 
 
 @app.function(image=image, volumes=VOLUMES, env=ENV, timeout=1800)
@@ -457,7 +539,7 @@ def main(
     fps: float = 0.0,
     steps: str = "1,3",
 ) -> None:
-    """``modal run modal_app.py --cmd <doctor|gpu|prepare|video|videos|analyze|list|fetch>``"""
+    """``modal run modal_app.py --cmd <doctor|gpu|net|prepare|video|videos|analyze|list|fetch>``"""
     import json
     import subprocess
 
@@ -469,6 +551,8 @@ def main(
         print(doctor.remote())
     elif cmd == "gpu":
         print(json.dumps(gpu_check.remote(), indent=2))
+    elif cmd == "net":
+        print(json.dumps(net_check.remote(), indent=2))
     elif cmd == "prepare":
         print(prepare.remote())
     elif cmd == "video":
@@ -504,5 +588,5 @@ def main(
         print(f"\nexit {proc.returncode}; data is under {LOCAL_OUTPUT_DIR}/")
     else:
         raise SystemExit(
-            f"unknown cmd {cmd!r}; use doctor, gpu, prepare, video, videos, analyze, list or fetch"
+            f"unknown cmd {cmd!r}; use doctor, gpu, net, prepare, video, videos, analyze, list or fetch"
         )
