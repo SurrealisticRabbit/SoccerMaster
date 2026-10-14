@@ -24,6 +24,8 @@ except ImportError:  # pragma: no cover - depends on the installed transformers
 from soccermaster.tracklab.utils.collate import default_collate, Unbatchable
 from soccermaster.tracklab.pipeline.detectionlevel_module import DetectionLevelModule
 
+from soccermaster.soccernet_gamestate.vlm_compat import vlm_load_kwargs
+
 from multiprocessing import Pool
 
 log = logging.getLogger(__name__)
@@ -64,10 +66,8 @@ class QWEN2_5VL_JN_AND_ROLE_BATCH(DetectionLevelModule):
         
         self.model = model_api.from_pretrained(
             self.model_path,
-            dtype=torch.bfloat16,
-            attn_implementation="flash_attention_2",
             device_map="auto",
-            # device_map=device,
+            **vlm_load_kwargs(),
         )
         self.processor = AutoProcessor.from_pretrained(self.model_path, max_pixels=int(cfg.image_width*cfg.image_height/cfg.downsample_factor/cfg.downsample_factor)//(28*28)*(28*28), use_fast=False)
         self.processor.tokenizer.padding_side = "left"
