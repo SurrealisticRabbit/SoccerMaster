@@ -10,6 +10,13 @@ from soccermaster.tracklab.pipeline import DetectionLevelModule
 from soccermaster.tracklab.utils.coordinates import rescale_keypoints
 from soccermaster.tracklab.utils.collate import default_collate
 from soccermaster.soccernet_gamestate.reid.prtreid_dataset import ReidDataset
+
+# prtreid (a torchreid fork) calls matplotlib.cm.get_cmap at import time; matplotlib
+# 3.9 removed it. Must run before the `import prtreid` statements below.
+from soccermaster.tracklab.utils.matplotlib_compat import patch_legacy_cmap
+
+patch_legacy_cmap()
+
 from prtreid.scripts.main import build_config, build_torchreid_model_engine
 from prtreid.tools.feature_extractor import FeatureExtractor
 from prtreid.utils.imagetools import (
