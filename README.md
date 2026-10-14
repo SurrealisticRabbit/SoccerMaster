@@ -440,6 +440,59 @@ Fields:
 - `K`: 3x3 camera intrinsic matrix.
 - `R`: 3x3 rotation matrix.
 
+## Development
+
+### Versioning
+
+The version comes from the git tag via `setuptools-scm` — there is no number to edit
+by hand. Tags are normalised to PEP 440:
+
+| tag | package version |
+|---|---|
+| `v1.0.1-alpha` | `1.0.1a0` |
+| `v0.2.0-beta1` | `0.2.0b1` |
+| `v2.0.0-rc1` | `2.0.0rc1` |
+| `v1.0.0` | `1.0.0` |
+
+A commit after a tag reports `<version>.post1.devN+g<hash>` rather than claiming a
+future release, so a wheel built from `main` is traceable to a commit and clearly not
+the release itself.
+
+### Tests
+
+```bash
+pip install -e ".[dev]"
+pytest
+```
+
+The suite is a regression suite, not exhaustive coverage: it targets the failures this
+project actually hit — the package importing lazily, the `hydra_plugins` package
+existing, both pipeline configs composing with every `_target_` resolvable, paths
+retargeting under `weights_dir`, the manifest being complete, and the exporter
+round-tripping. It runs on CPU with no weights and no GPU; tests needing an optional
+dependency skip instead of failing, so the same suite works in a light and a full
+environment.
+
+`soccermaster doctor --steps 1,3` is the runtime equivalent: it checks the same things
+against your actual machine and weights before you start a long run.
+
+### Releasing
+
+Push a tag; the rest is automatic:
+
+```bash
+git tag v1.0.1-alpha
+git push origin v1.0.1-alpha
+```
+
+`.github/workflows/release.yml` then runs the tests, builds the sdist and wheel,
+asserts that the artefact carries the tag's version and that the wheel contains the
+Hydra configs and the search-path plugin, and publishes a GitHub release. A tag
+containing a hyphen is marked as a pre-release.
+
+`ci.yml` runs the same tests on pushes to `main` and on pull requests, across Python
+3.10, 3.12 and 3.13.
+
 ## Licensing
 
 This repository vendors code from TrackLab (MIT), SAM 2 (Apache-2.0), the SoccerNet
