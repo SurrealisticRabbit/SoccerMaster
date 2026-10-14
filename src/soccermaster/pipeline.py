@@ -107,6 +107,28 @@ def _visualization_overrides(save_videos: bool, save_images: bool = False) -> li
     ]
 
 
+def recommended_workers() -> int:
+    """A sane ``num_cores`` for this machine.
+
+    Upstream's configs hardcode ``num_cores: 64`` (step 1) and ``32`` (step 3) because
+    they were run on a 64-core server. That value is fed to the ReID dataloader
+    (``workers: ${num_cores}``), the tracking engine (``num_workers``) and the
+    visualizer, so on a normal box -- Colab gives you about 2 vCPUs -- it spawns 64
+    workers onto 2 cores. The run does not crash; it thrashes and looks hung, which is
+    how a handful of frames can take half an hour.
+
+    Cap at the machine's CPU count, and leave a core free when we can.
+    """
+    import os
+
+    cpus = os.cpu_count() or 4
+    return max(1, min(8, cpus - 1))
+
+
+def _worker_overrides(workers: int | None = None) -> list[str]:
+    return [f"num_cores={workers if workers is not None else recommended_workers()}"]
+
+
 def run_step1(
     dataset_path: Path,
     out_dir: Path,
@@ -114,6 +136,7 @@ def run_step1(
     eval_set: str = "sn500",
     device: str = "cuda",
     save_videos: bool = False,
+    workers: int | None = None,
     extra_overrides: Sequence[str] = (),
 ) -> Path:
     """Detection + tracking. Writes ``<out_dir>/step1/sn-gamestate.pklz``.
@@ -134,6 +157,7 @@ def run_step1(
         f"state.save_file={state_path}",
         "state.load_file=null",
         f"experiment_subname=step_1_{eval_set}",
+        *_worker_overrides(workers),
         *_visualization_overrides(save_videos),
         *_video_filter_overrides(video_ids, eval_set),
         *extra_overrides,
@@ -209,6 +233,7 @@ def run_step3(
     eval_set: str = "sn500",
     device: str = "cuda",
     save_videos: bool = False,
+    workers: int | None = None,
     extra_overrides: Sequence[str] = (),
 ) -> Path:
     """Calibration, jersey number, role, team. Writes step-3 state.
@@ -229,6 +254,7 @@ def run_step3(
         f"state.load_file={Path(step2_state).resolve()}",
         f"state.save_file={state_path}",
         f"experiment_subname=step_3_{eval_set}",
+        *_worker_overrides(workers),
         *_visualization_overrides(save_videos),
         *_video_filter_overrides(video_ids, eval_set),
         *extra_overrides,

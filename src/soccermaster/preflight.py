@@ -221,6 +221,8 @@ def check_configs(steps: list[int], report: Report) -> None:
         report.ok(f"{config_name}: composed, {len(cfg)} keys, {len(pipeline)} pipeline modules")
         report.note("pipeline: " + ", ".join(str(p) for p in pipeline))
 
+        check_worker_budget(cfg, config_name, report)
+
         # Resolve the _target_ of every module that will actually be instantiated.
         # Modules in `defaults` but not in `pipeline` are never built, so an import
         # error there is not fatal -- verify() skips them.
@@ -255,6 +257,32 @@ def check_configs(steps: list[int], report: Report) -> None:
                 report.fail(f"unresolvable module: {item}")
         if not missing and not broken:
             report.ok(f"all {len(pipeline)} pipeline modules resolve")
+
+
+def check_worker_budget(cfg, config_name: str, report: Report) -> None:
+    """Warn when the config asks for far more workers than this machine has.
+
+    Upstream hardcodes ``num_cores: 64`` (step 1) / ``32`` (step 3) from its 64-core
+    server. That feeds the ReID dataloader, the tracking engine and the visualizer, so
+    on a 2-vCPU notebook it spawns 64 workers onto 2 cores. Nothing crashes; the run
+    thrashes and looks hung. This is a warning, not a failure, because the pipeline
+    overrides it by default.
+    """
+    import os
+
+    requested = cfg.get("num_cores")
+    if requested is None:
+        return
+    cpus = os.cpu_count() or 1
+    if int(requested) > cpus * 2:
+        report.warn(
+            f"{config_name}: num_cores={requested} but this machine has {cpus} CPUs; "
+            f"that many dataloader workers will thrash and look like a hang",
+            "soccermaster sets num_cores automatically; if invoking Hydra directly, "
+            f"pass num_cores={max(1, min(8, cpus - 1))}",
+        )
+    else:
+        report.note(f"{config_name}: num_cores={requested} (machine has {cpus} CPUs)")
 
 
 def check_dataset(dataset: str | None, steps: list[int], report: Report) -> None:
