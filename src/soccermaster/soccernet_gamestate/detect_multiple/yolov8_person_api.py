@@ -9,6 +9,7 @@ os.environ["YOLO_VERBOSE"] = "False"
 from ultralytics import YOLO
 
 from soccermaster.tracklab.utils.coordinates import ltrb_to_ltwh
+from soccermaster.tracklab.utils.ultralytics_compat import allow_ultralytics_globals
 
 import logging
 
@@ -37,6 +38,7 @@ class YOLOv8_Person(ImageLevelModule):
         super().__init__(batch_size)
         self.cfg = cfg
         self.device = device
+        allow_ultralytics_globals()
         self.model = YOLO(cfg.path_to_checkpoint)
         self.model.to(device)
         self.id = 0
