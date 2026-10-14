@@ -56,9 +56,9 @@ REPO = "https://github.com/SurrealisticRabbit/SoccerMaster.git"
 #: uploaded from local disk on every run, so edits here take effect immediately.
 #: Bump this when anything under ``src/`` changes, or the image keeps serving the old
 #: package: Modal caches layers by definition string and this is what makes it specific.
-#: Current value carries the api re-export fix (analyze_video/run_pipeline are no longer
-#: copies, so `fps` and `quality` actually reach the pipeline).
-REF = "87a6c31305353b4cb3aa9080d1ef2aa7ded9f5e3"
+#: Current value carries the live-output fix (_run streams a step's output instead of
+#: buffering it until exit, which made a working run look hung).
+REF = "30a31250e1f8af39b125ab06a113906426bfe807"
 
 #: Local directory the exported data is written back to by ``--cmd fetch``.
 LOCAL_OUTPUT_DIR = Path("modal-outputs")
