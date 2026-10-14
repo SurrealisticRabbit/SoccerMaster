@@ -18,7 +18,23 @@ from torch import nn
 import torch.nn.functional as F
 from torch.nn.init import xavier_uniform_, constant_
 
-from ..functions import MSDeformAttnFunction
+from ..functions import MSDeformAttnFunction, has_cuda_ext, ms_deform_attn_core_pytorch
+
+
+def _ms_deform_attn(value, value_spatial_shapes, value_level_start_index,
+                    sampling_locations, attention_weights, im2col_step):
+    """Dispatch to the compiled CUDA op, or to the pure-PyTorch fallback.
+
+    The fallback exists so the model can be imported and run on a machine without a
+    CUDA toolchain. It is differentiable (it goes through ``grid_sample``), so
+    inference and even training work; it is simply slower than the fused kernel.
+    """
+    if has_cuda_ext():
+        return MSDeformAttnFunction.apply(
+            value, value_spatial_shapes, value_level_start_index,
+            sampling_locations, attention_weights, im2col_step)
+    return ms_deform_attn_core_pytorch(
+        value, value_spatial_shapes, sampling_locations, attention_weights)
 
 
 def _is_power_of_2(n):
@@ -114,10 +130,7 @@ class MSDeformAttn(nn.Module):
         # for amp
         if value.dtype == torch.float16:
             # for mixed precision
-            # output = MSDeformAttnFunction.apply(
-            #     value.to(torch.float32), input_spatial_shapes, input_level_start_index, sampling_locations.to(torch.float32), attention_weights, self.im2col_step
-            # )
-            output = MSDeformAttnFunction.apply(
+            output = _ms_deform_attn(
                 value.to(torch.float32), input_spatial_shapes, input_level_start_index,
                 sampling_locations.to(torch.float32), attention_weights.to(torch.float32), self.im2col_step
             )
@@ -128,15 +141,15 @@ class MSDeformAttn(nn.Module):
         # for BF16:
         if value.dtype == torch.bfloat16:
             # for mixed precision
-            output = MSDeformAttnFunction.apply(
+            output = _ms_deform_attn(
                 value.to(torch.float32), input_spatial_shapes, input_level_start_index,
-                sampling_locations.to(torch.float32), attention_weights, self.im2col_step)
+                sampling_locations.to(torch.float32), attention_weights.to(torch.float32), self.im2col_step)
             output = output.to(torch.bfloat16)
             output = self.output_proj(output)
             return output
 
 
-        output = MSDeformAttnFunction.apply(
+        output = _ms_deform_attn(
             value, input_spatial_shapes, input_level_start_index, sampling_locations, attention_weights, self.im2col_step)
         output = self.output_proj(output)
         return output

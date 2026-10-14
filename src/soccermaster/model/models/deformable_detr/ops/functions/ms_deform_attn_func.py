@@ -15,12 +15,30 @@ import torch.nn.functional as F
 from torch.autograd import Function
 from torch.autograd.function import once_differentiable
 
-import MultiScaleDeformableAttention as MSDA
+# The compiled CUDA extension is optional. When it is missing the module still
+# imports, and MSDeformAttn falls back to the pure-PyTorch implementation below
+# (see soccermaster.model.models.deformable_detr.ops.modules.ms_deform_attn).
+try:
+    import MultiScaleDeformableAttention as MSDA
+except ImportError:  # pragma: no cover - depends on the build environment
+    MSDA = None
+
+
+def has_cuda_ext() -> bool:
+    """True when the compiled MultiScaleDeformableAttention extension is usable."""
+    return MSDA is not None
 
 
 class MSDeformAttnFunction(Function):
     @staticmethod
     def forward(ctx, value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights, im2col_step):
+        if MSDA is None:
+            raise RuntimeError(
+                "The MultiScaleDeformableAttention extension is not built. Build it "
+                "(see src/soccermaster/model/models/deformable_detr/ops/) or use the "
+                "pure-PyTorch path, which MSDeformAttn selects automatically when the "
+                "extension is unavailable."
+            )
         ctx.im2col_step = im2col_step
         output = MSDA.ms_deform_attn_forward(
             value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights, ctx.im2col_step)
