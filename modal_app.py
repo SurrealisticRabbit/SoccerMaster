@@ -156,15 +156,25 @@ def fetch_video(url: str = "", name: str = "") -> dict:
     output = str(dest_dir / name) if name else str(dest_dir) + os.sep
 
     started = time.time()
-    out = gdown.download(url=url, output=output, fuzzy=True, quiet=False)
-    if not out or not Path(out).is_file():
-        return {"error": f"gdown could not download {url}"}
+
+    # No `fuzzy=` here. That argument existed in gdown 4.x and was removed in 5.0, while
+    # pyproject floors gdown at >=5.0 -- so passing it raises TypeError before any
+    # download starts. gdown resolves a /file/d/<id>/view link from `url` on its own.
+    out = gdown.download(url=url, output=output, quiet=False)
+
+    # The declared return type is a union, so do not assume it is a path.
+    if not isinstance(out, (str, os.PathLike)):
+        return {"error": f"gdown returned {type(out).__name__}, not a path: {out!r}"}
+
+    path = Path(out)
+    if not path.is_file():
+        return {"error": f"gdown reported {out} but no file is there"}
 
     videos_volume.commit()
-    size = Path(out).stat().st_size
+    size = path.stat().st_size
     return {
-        "name": Path(out).name,
-        "path": str(out),
+        "name": path.name,
+        "path": str(path),
         "size_gb": round(size / 1e9, 2),
         "seconds": round(time.time() - started, 1),
     }
