@@ -6,13 +6,16 @@
 # upstream instructions instead of downloading.
 #
 # fields:
-#   source        hf | gdrive | manual
+#   source        hf | gdrive | runtime | manual
 #   repo          huggingface repo id            (source: hf)
 #   allow         file globs to fetch            (source: hf, optional)
 #   file_id       google drive file id           (source: gdrive)
 #   dest          destination dir, relative to weights_dir()
 #   rename        map of fetched-name -> stored-name (optional)
-#   hint          instructions shown for manual entries
+#   hint          instructions shown for every entry
+#
+# source: runtime means the pipeline downloads it itself on first use, so
+# `soccermaster prepare` deliberately does not fetch it.
 
 siglip:
   source: hf
@@ -61,19 +64,16 @@ legibility:
   hint: ResNet34 legibility classifier (jersey-number-pipeline).
 
 reid:
-  source: manual
+  source: runtime
   dest: reid
   hint: >-
-    ReID weights (hrnetv2_w32_imagenet_pretrained.pth, prtreid-soccernet-baseline.pth.tar)
-    come from the SoccerNet Game State Recognition dev kit:
-    https://github.com/soccernet/sn-gamestate
-    Place them in weights/reid/.
+    Fetched on the first pipeline run by the ReID module (prtreid_api) from Zenodo,
+    md5-verified: prtreid-soccernet-baseline.pth.tar and
+    hrnetv2_w32_imagenet_pretrained.pth. No manual step needed.
 
 calibration:
-  source: manual
+  source: runtime
   dest: calibration
   hint: >-
-    Calibration weights (mean.npy, std.npy, Radar.png, SV_kp, SV_lines, pnl_SV_kp,
-    pnl_SV_lines) come from the SoccerNet Game State Recognition dev kit:
-    https://github.com/soccernet/sn-gamestate
-    Place them in weights/calibration/.
+    Fetched on the first pipeline run by the calibration module (nbjw_calib) from
+    Zenodo: SV_kp and SV_lines. No manual step needed.

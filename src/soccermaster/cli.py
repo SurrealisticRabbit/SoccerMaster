@@ -18,8 +18,7 @@ def _cmd_prepare(args: argparse.Namespace) -> int:
     if args.list:
         entries = downloads.load_manifest()
         for name, entry in entries.items():
-            kind = "auto" if entry.automatic else "manual"
-            print(f"{name:<14} {kind:<7} -> {entry.dest}")
+            print(f"{name:<14} {entry.kind:<8} -> {entry.dest}")
         return 0
 
     names = args.names or list(downloads.load_manifest())

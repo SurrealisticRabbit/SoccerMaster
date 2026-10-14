@@ -26,7 +26,17 @@ class WeightEntry:
 
     @property
     def automatic(self) -> bool:
+        """True when `soccermaster prepare` can fetch this entry itself."""
         return self.source in ("hf", "gdrive")
+
+    @property
+    def kind(self) -> str:
+        """Human-readable classification for listings."""
+        if self.automatic:
+            return "auto"
+        if self.source == "runtime":
+            return "runtime"
+        return "MANUAL"
 
 
 def load_manifest() -> dict[str, WeightEntry]:
@@ -94,7 +104,10 @@ def prepare(name: str, dry_run: bool = False) -> Path:
         print(f"  {entry.hint}")
 
     if not entry.automatic:
-        print("  manual download required; nothing to fetch automatically.")
+        if entry.source == "runtime":
+            print("  the pipeline fetches this itself on first use; nothing to do here.")
+        else:
+            print("  manual download required; nothing to fetch automatically.")
         return entry.dest
 
     if dry_run:

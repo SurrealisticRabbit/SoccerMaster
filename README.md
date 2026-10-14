@@ -78,13 +78,13 @@ are named after their upstream, with original headers intact (see
 
 Verified on a Colab T4 (Python 3.13, torch 2.11+cu130, transformers 4.51.3): install
 from GitHub, `load_model()` (967.8 M parameters, five heads, onto the GPU) and
-`predict(..., task="detection")` all run. The 3-step pipeline has **not** been run —
-it needs the `yolo`/`qwen7b` weights plus the SoccerNet-hosted `reid` and
-`calibration` sets, which are not automatic downloads.
+`predict(..., task="detection")` all run. The 3-step pipeline has **not** been run
+end to end yet.
 
-Scope notes: SAM 2 stays an optional extra and step 2 needs a CUDA build. The
-`reid` and `calibration` weights are SoccerNet-hosted and still have to be placed by
-hand. The rest of this README documents the refactored package; upstream commands
+Scope notes: SAM 2 stays an optional extra and step 2 needs a CUDA build. The model
+weights are covered by `soccermaster prepare`; the `reid` and `calibration` weights
+are fetched by the pipeline itself from Zenodo on first use, so they need no manual
+step. The rest of this README documents the refactored package; upstream commands
 survive below where they are still valid, with their paths updated.
 
 ---
@@ -202,11 +202,16 @@ soccermaster prepare                   # fetch every automatic entry
 | `qwen7b` / `qwen72b` | Hugging Face | jersey number + role recognition |
 | `sam2` | Hugging Face | SAM 2 video predictor checkpoint |
 | `legibility` | Google Drive | ResNet34 legibility classifier |
-| `reid`, `calibration` | **manual** | from the [SoccerNet GSR dev kit](https://github.com/soccernet/sn-gamestate) |
+| `reid`, `calibration` | **runtime** | the pipeline fetches these from Zenodo on first use; `prepare` skips them |
 
-`reid` and `calibration` cannot be fetched automatically; `prepare` prints the
-upstream instructions. Place those files under `weights/reid/` and
-`weights/calibration/` respectively.
+For step 1 the checkpoint that is easy to miss is the YOLO detector: the configs ask
+for `weights/yolo/yolo_v8x6_person_lr_default_best.pt`, and the manifest fetches
+`yolo_v8x6_finetuned.pt` from Hugging Face and renames it to that name.
+
+`reid` and `calibration` are marked **runtime**: the ReID module
+(`prtreid_api.download_models`) and the calibration module (`nbjw_calib`) download
+their own weights from Zenodo on first use, md5-verified, skipping the download when
+the file is already present. `soccermaster prepare` therefore does nothing for them.
 
 ### 3. Directory conventions
 
