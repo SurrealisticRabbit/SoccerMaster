@@ -297,6 +297,61 @@ def net_check(megabytes: float = 20.0) -> dict:
     return {"requested_mb": megabytes, "throughput": results}
 
 
+def json_safe(payload: dict) -> dict:
+    """Reduce a payload to JSON primitives, and say so if anything had to be coerced.
+
+    Modal pickles a function's return value and deserializes it in the **client**
+    environment -- here the ``.venv`` that drives ``modal run``, which has no torch. A
+    four-minute run therefore died at the very last step: the pipeline finished, the
+    volume was committed, and the results could not be transferred back because
+    something in the payload referenced torch::
+
+        DeserializationError: Deserialization failed because the 'torch' module is not
+        available in the local environment.
+
+    Round-tripping through JSON removes that entire class of failure: what comes back is
+    plain ``str``/``int``/``float``/``bool``/``None``. It is a no-op for a payload that
+    was already plain, so it costs one small serialization.
+
+    The offending key is named rather than silently stringified, because the symptom --
+    a successful run reported as a failure -- is confusing enough that the reason should
+    not also be a mystery.
+    """
+    import json
+
+    # type(...) in, not isinstance: `type(v) is str` excludes TorchVersion and every other
+    # subclass that json accepts but pickle cannot resolve without its defining module.
+    primitives = (str, int, float, bool, type(None))
+
+    def offenders(value, path=""):  # noqa: ANN001, ANN202 - small local walker
+        found: list[str] = []
+        if type(value) in primitives:
+            return found
+        if isinstance(value, dict):
+            for key, item in value.items():
+                found += offenders(item, f"{path}.{key}" if path else str(key))
+        elif isinstance(value, (list, tuple)):
+            for index, item in enumerate(value):
+                found += offenders(item, f"{path}[{index}]")
+        else:
+            defined = f"{type(value).__module__}.{type(value).__name__}"
+            found.append(f"{path} ({defined})" if path else defined)
+        return found
+
+    problems = offenders(payload)
+    if problems:
+        print(
+            "coerced non-plain values (pickle would need these modules client-side): "
+            + "; ".join(problems[:20]),
+            flush=True,
+        )
+
+    # Unconditional, not guarded on json.dumps succeeding: a str/int/float SUBCLASS
+    # serializes fine and then fails to unpickle, so the round trip is what removes the
+    # class rather than a check that cannot see it.
+    return json.loads(json.dumps(payload, default=str))
+
+
 @app.function(image=image, volumes=VOLUMES, env=ENV, timeout=1800)
 def doctor(steps: str = "1,3") -> str:
     """Read-only pre-flight. Cheap enough to run before every attempt.
@@ -512,7 +567,9 @@ def analyze(
             payload["files"][kind] = {"header": lines[:1], "n_rows": max(0, len(lines) - 1), "preview": lines[:6]}
 
     outputs_volume.commit()
-    return payload
+    # Committed first: the produced data is the valuable thing, and it must survive even
+    # if transferring the summary back fails.
+    return json_safe(payload)
 
 
 @app.function(image=image, volumes=VOLUMES, env=ENV, timeout=1800)
