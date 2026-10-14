@@ -1,0 +1,79 @@
+# Weight manifest for `soccermaster prepare`.
+#
+# Each entry describes where a set of pretrained weights comes from and where it
+# lands under `weights_dir()` (see soccermaster.paths). Entries with
+# `source: manual` cannot be fetched automatically; `prepare` prints the
+# upstream instructions instead of downloading.
+#
+# fields:
+#   source        hf | gdrive | manual
+#   repo          huggingface repo id            (source: hf)
+#   allow         file globs to fetch            (source: hf, optional)
+#   file_id       google drive file id           (source: gdrive)
+#   dest          destination dir, relative to weights_dir()
+#   rename        map of fetched-name -> stored-name (optional)
+#   hint          instructions shown for manual entries
+
+siglip:
+  source: hf
+  repo: google/siglip2-large-patch16-512
+  dest: google/siglip2-large-patch16-512
+  hint: SigLIP2 backbone used by the SoccerMaster encoder.
+
+soccermaster:
+  source: hf
+  repo: xleprime/SoccerMaster
+  dest: SoccerMaster
+  hint: SoccerMaster pretrained checkpoints (backbone + task heads).
+
+yolo:
+  source: hf
+  repo: xleprime/SoccerMaster
+  allow: ["yolo_v8x6_finetuned.pt", "yolo/*"]
+  dest: yolo
+  rename:
+    yolo_v8x6_finetuned.pt: yolo_v8x6_person_lr_default_best.pt
+  hint: Person detector used by the GSR step-1 pipeline.
+
+qwen7b:
+  source: hf
+  repo: Qwen/Qwen2.5-VL-7B-Instruct
+  dest: jn/Qwen2.5-VL-7B-Instruct
+  hint: Jersey-number / role recognition (accelerated config).
+
+qwen72b:
+  source: hf
+  repo: Qwen/Qwen2.5-VL-72B-Instruct
+  dest: jn/Qwen2.5-VL-72B-Instruct
+  hint: Higher-accuracy jersey-number recognition (optional).
+
+sam2:
+  source: hf
+  repo: facebook/sam2.1-hiera-large
+  allow: ["*.pt"]
+  dest: sam2
+  hint: SAM 2 video predictor checkpoint (step-2 segmentation refinement).
+
+legibility:
+  source: gdrive
+  file_id: 18HAuZbge3z8TSfRiX_FzsnKgiBs-RRNw
+  dest: legibility
+  hint: ResNet34 legibility classifier (jersey-number-pipeline).
+
+reid:
+  source: manual
+  dest: reid
+  hint: >-
+    ReID weights (hrnetv2_w32_imagenet_pretrained.pth, prtreid-soccernet-baseline.pth.tar)
+    come from the SoccerNet Game State Recognition dev kit:
+    https://github.com/soccernet/sn-gamestate
+    Place them in weights/reid/.
+
+calibration:
+  source: manual
+  dest: calibration
+  hint: >-
+    Calibration weights (mean.npy, std.npy, Radar.png, SV_kp, SV_lines, pnl_SV_kp,
+    pnl_SV_lines) come from the SoccerNet Game State Recognition dev kit:
+    https://github.com/soccernet/sn-gamestate
+    Place them in weights/calibration/.

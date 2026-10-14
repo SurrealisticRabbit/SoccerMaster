@@ -1,8 +1,19 @@
 /codes/SoccerMaster/datasets
 
+# Unified package runtime dirs (see src/soccermaster/paths.py)
+/data/
+/weights/
+/outputs/
+
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Python build artefacts
+*.egg-info/
+build/
+dist/
+.venv/
 
 tmp
 pretrained_models

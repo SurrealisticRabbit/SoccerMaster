@@ -1,11 +1,11 @@
 # SoccerMaster: A Vision Foundation Model for Soccer Understanding
+
 Official implementation of **SoccerMaster: A Vision Foundation Model for Soccer Understanding** (CVPR 2026 Oral)
 
 [*Haolin Yang*](https://haolinyang-hlyang.github.io/),
 [*Jiayuan Rao*](https://jyrao.github.io/),
 [*Haoning Wu*](https://haoningwu3639.github.io/),
 [*Weidi Xie*](https://weidixie.github.io/)
-
 
 <div style="line-height: 1;">
   <a href="https://haolinyang-hlyang.github.io/SoccerMaster/" target="_blank" style="margin: 2px;">
@@ -25,200 +25,206 @@ Official implementation of **SoccerMaster: A Vision Foundation Model for Soccer 
 </div>
 <p><em><strong>SoccerMaster Architecture.</strong> (a) The architecture of SoccerMaster, which encodes both soccer videos and images through spatial and temporal attention modules to generate semantically rich representations. (b) The pretraining tasks and downstream adaptations of SoccerMaster across both spatial perception and semantic understanding tasks.</em></p>
 
+---
+
+## Repository layout
+
+This fork consolidates the original multi-project tree into a **single installable
+package** under `src/`. Package folders are named after their upstream so you can
+tell at a glance what came from where:
+
+```
+pyproject.toml            # one distribution: "soccermaster"
+src/soccermaster/
+├── api.py                # notebook-friendly API (load_model / predict / run_pipeline)
+├── cli.py                # `soccermaster` console script
+├── downloads.py          # weight fetching (Hugging Face / Google Drive)
+├── paths.py              # data / weights / outputs locations
+├── pipeline.py           # 3-step game-state pipeline runner
+├── model/                # SoccerMaster foundation model        — this paper
+├── tracklab/             # TrackLab tracking framework          — vendored (MIT)
+├── soccernet_gamestate/  # SoccerNet game-state reconstruction  — vendored
+│   └── plugins/calibration/   # TVCalib, PnLCalib, NBJW, sn_calibration_baseline
+├── sam2_refine/          # SAM 2 mask refinement                — vendored glue
+└── resources/            # weight manifest and small assets
+third_party/sam2/         # vendored SAM 2 library (optional, not installed by default)
+docs/                     # TrackLab, SoccerNet-GSR and calibration documentation
+```
+
+`model/`, `api.py`, `cli.py`, `pipeline.py` and `downloads.py` are ours. Everything
+under `tracklab/`, `soccernet_gamestate/`, `sam2_refine/`, `third_party/` and the
+vendored bits of `docs/` came from other projects — see
+[`PROVENANCE.md`](PROVENANCE.md) for the full attribution, including which
+pretrained weights come from Google, SoccerNet, Alibaba and Meta.
+
 ## Quick Start
 
-### 1. Environment Setup
+### 1. Environment setup
 
-Create a conda environment and install dependencies:
+Python 3.10+ is required. PyTorch must be installed first with the CUDA wheel index
+so that pip does not pull a CPU-only build over an existing CUDA install:
 
 ```bash
-conda create -n tracklab_release python=3.10.16
-conda activate tracklab_release
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
 pip install torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu121
 
-pip install setuptools==78.1.1
-cd ./codes/sn-gamestate
 pip install -e .
-cd ../tracklab
-pip install -e .
-cd ../sam2
-pip install -e .
-
-pip install albumentations==1.4.19
-pip install git+https://github.com/huggingface/transformers
-pip install accelerate==1.8.1
-pip install "qwen-vl-utils[decord]==0.0.8"
-pip install flash-attn --no-build-isolation
 ```
 
-### 2. Download Pretrained Models
-
-First, download the SigLIP2 backbone model to the pretrained models directory:
+Optional extras:
 
 ```bash
-pip install huggingface_hub
-hf download google/siglip2-large-patch16-512 --local-dir ./codes/SoccerMaster/pretrained_models/google/siglip2-large-patch16-512
+pip install -e ".[sam2]"    # SAM 2 runtime deps, needed for pipeline step 2
+pip install -e ".[train]"   # flash-attn, only needed to train
+pip install -e ".[dev]"     # ruff + pytest
 ```
 
-### 3. Download SoccerMaster Checkpoints
-
-Clone the SoccerMaster model checkpoints from Hugging Face:
+The SAM 2 *library* itself is vendored at `third_party/sam2` and is not part of the
+installed wheel. Install it as well if you want to run step 2:
 
 ```bash
-cd SoccerMaster/codes/SoccerMaster/pretrained_models
-mkdir SoccerMaster
-hf download xleprime/SoccerMaster --local-dir SoccerMaster
+pip install -e third_party/sam2
 ```
 
-After completing these steps, you should have the following directory structure:
-```
-root/codes/SoccerMaster/pretrained_models/
-├── google/
-│   └── siglip2-large-patch16-512/
-└── SoccerMaster/
-```
+### 2. Download pretrained weights
 
-### 4. Prepare Pretrained Models
-
-Please organize `codes/sn-gamestate/pretrained_models/` as follows:
-
-```
-codes/sn-gamestate/pretrained_models/
-├── calibration
-│   ├── mean.npy
-│   ├── pnl_SV_kp
-│   ├── pnl_SV_lines
-│   ├── Radar.png
-│   ├── std.npy
-│   ├── SV_kp
-│   └── SV_lines
-├── google
-│   └── siglip2-large-patch16-512
-├── jn
-│   ├── Qwen2.5-VL-72B-Instruct
-│   └── Qwen2.5-VL-7B-Instruct
-├── legibility
-│   └── legibility_resnet34_soccer_20240215.pth
-├── reid
-│   ├── hrnetv2_w32_imagenet_pretrained.pth
-│   └── prtreid-soccernet-baseline.pth.tar
-├── SoccerMaster
-│   └── ...
-└── yolo
-    └── yolo_v8x6_finetuned.pt
-```
-
-**Download instructions:**
-
-- **calibration & reid**: Follow the instructions from [SoccerNet Game State Recognition](https://github.com/soccernet/sn-gamestate) to obtain the calibration and ReID pretrained models.
-- **google**: Download `siglip2-large-patch16-512` from [Hugging Face](https://huggingface.co/google/siglip2-large-patch16-512).
-- **legibility**: Download `legibility_resnet34_soccer_20240215.pth` from [Google Drive](https://drive.google.com/file/d/18HAuZbge3z8TSfRiX_FzsnKgiBs-RRNw/view?usp=sharing), following the [jersey-number-pipeline](https://github.com/mkoshkina/jersey-number-pipeline) project.
-- **jn**: Download Qwen2.5-VL models from the [Qwen2.5-VL Collection](https://huggingface.co/collections/Qwen/qwen25-vl) on Hugging Face.
-- **yolo**: Move `yolo_v8x6_finetuned.pt` to `codes/sn-gamestate/pretrained_models/yolo/`. This file can be obtained from [https://huggingface.co/xleprime/SoccerMaster](https://huggingface.co/xleprime/SoccerMaster).
-
-After preparing all pretrained models, create a symbolic link so that `codes/SoccerMaster/pretrained_models` points to `codes/sn-gamestate/pretrained_models`:
+`soccermaster prepare` reads `src/soccermaster/resources/weights_manifest.yaml`:
 
 ```bash
-cd codes/SoccerMaster
-ln -s ../sn-gamestate/pretrained_models pretrained_models
+soccermaster prepare --list            # show every entry and its destination
+soccermaster prepare --dry-run siglip  # show what would be fetched
+soccermaster prepare siglip soccermaster yolo   # fetch specific entries
+soccermaster prepare                   # fetch every automatic entry
+```
+
+| entry | source | notes |
+|---|---|---|
+| `siglip` | Hugging Face | SigLIP2 backbone used by the encoder |
+| `soccermaster` | Hugging Face | SoccerMaster checkpoints |
+| `yolo` | Hugging Face | person detector for step 1 |
+| `qwen7b` / `qwen72b` | Hugging Face | jersey number + role recognition |
+| `sam2` | Hugging Face | SAM 2 video predictor checkpoint |
+| `legibility` | Google Drive | ResNet34 legibility classifier |
+| `reid`, `calibration` | **manual** | from the [SoccerNet GSR dev kit](https://github.com/soccernet/sn-gamestate) |
+
+`reid` and `calibration` cannot be fetched automatically; `prepare` prints the
+upstream instructions. Place those files under `weights/reid/` and
+`weights/calibration/` respectively.
+
+### 3. Directory conventions
+
+| purpose | default location | override |
+|---|---|---|
+| weights | `./weights` | `SOCCERMASTER_HOME` |
+| datasets | `./data` | `SOCCERMASTER_HOME` |
+| outputs | `./outputs` | `SOCCERMASTER_HOME` |
+
+In an editable install these default to the repository root; for a regular install
+they default to `~/.cache/soccermaster`. Set `SOCCERMASTER_HOME=/some/dir` to put
+all three somewhere else.
+
+## Using the model from Python
+
+```python
+import soccermaster as sm
+
+sm.prepare("siglip")
+sm.prepare("soccermaster")
+
+model = sm.load_model()                       # -> MultiTaskingModel
+outputs = sm.predict(model, "frames/SNGS-10001", task="detection")
+print(outputs.keys())                         # e.g. {'SoccerNetGSR_Detection': {...}}
+```
+
+`task` is one of `detection`, `lines`, `keypoints`, `caption`, `classification` or
+`all`. Outputs are the raw head outputs (no NMS / bbox rescaling), matching the
+original `inference_demo.py`. For a random-input smoke test of the weights:
+
+```bash
+soccermaster foundation-demo
 ```
 
 ## Data Pipeline
 
-### Input Data Format
-
-The data pipeline follows the [SoccerNet Game State Recognition (GSR)](https://github.com/soccernet/sn-gamestate) format. You need to organize your input video frames into the following directory structure. Here we use two video sequences (`SNGS-10001` with 750 frames and `SNGS-10002` with 722 frames) as an example:
+The data pipeline follows the [SoccerNet Game State Recognition (GSR)](https://github.com/soccernet/sn-gamestate) format. Organise your input frames as:
 
 ```
-codes/sn-gamestate/datasets/SoccerNetGS/
+data/SoccerNetGS/
 ├── sequences_info.json
 └── sn500/
     ├── SNGS-10001/
     │   └── img1/
     │       ├── 000001.jpg
-    │       ├── 000002.jpg
-    │       ├── ...
-    │       └── 000750.jpg
+    │       └── ... (750 frames)
     └── SNGS-10002/
         └── img1/
-            ├── 000001.jpg
-            ├── 000002.jpg
-            ├── ...
-            └── 000722.jpg
 ```
 
-Each video sequence should be extracted into individual frames (`.jpg`), placed under `<sequence_name>/img1/`, and named with zero-padded 6-digit indices starting from `000001.jpg`.
-
-You also need to prepare a `sequences_info.json` file that registers all sequences. The format is as follows:
+`sequences_info.json` registers all sequences:
 
 ```json
 {
     "sn500": [
-        {
-            "id": 0,
-            "name": "SNGS-10001",
-            "n_frames": 750
-        },
-        {
-            "id": 1,
-            "name": "SNGS-10002",
-            "n_frames": 722
-        }
+        { "id": 0, "name": "SNGS-10001", "n_frames": 750 },
+        { "id": 1, "name": "SNGS-10002", "n_frames": 722 }
     ]
 }
 ```
 
-Each entry contains:
-- `id`: a unique integer index for the sequence.
-- `name`: the directory name of the sequence (must match the folder name under `sn500/`).
-- `n_frames`: the total number of frames in the sequence.
-
-### Pipeline Steps
-
-The data pipeline consists of three steps.
-
-### Step 1: Detection & Tracking
+Run the three steps with one command (paths and state files are injected for you):
 
 ```bash
-cd codes/sn-gamestate
-CUDA_VISIBLE_DEVICES=0 python -m tracklab.main -cn gsr_step_1_example
+# all steps, specific sequences
+soccermaster pipeline --dataset ./data/SoccerNetGS --videos 10001,10002 --device 0
+
+# steps 1 and 3 only (no SAM 2 refinement)
+soccermaster pipeline --dataset ./data/SoccerNetGS --steps 1,3 --out ./outputs/pipeline
 ```
 
-### Step 2: SAM2 Segmentation Refinement
+| step | what it does | config |
+|---|---|---|
+| 1 | person detection + tracking | `gsr_step_1_example` |
+| 2 | SAM 2 mask refinement (needs the `sam2` extra) | `soccermaster.sam2_refine.inference` |
+| 3 | calibration, jersey number, role, team assignment | `gsr_step_3_example_accelerate` |
 
-Use SAM2 to refine the tracking results with precise segmentation masks, then merge the refined results back into the tracker state.
+Outputs land in `outputs/pipeline/step1/sn-gamestate.pklz`,
+`outputs/pipeline/step2/refined_sn-gamestate.pklz` and
+`outputs/pipeline/step3/sn-gamestate.pklz`.
+
+> **Model selection for step 3:** the accelerated config
+> (`gsr_step_3_example_accelerate`, used by default) runs jersey-number and role
+> recognition in a single Qwen2.5-VL-7B module. For higher accuracy at higher cost,
+> use `gsr_step_3_example` with Qwen2.5-VL-72B for jersey numbers.
+
+> **Platform notes:** steps 1 and 3 and model training run as plain Python and work
+> on Windows and Linux. Step 2 requires a CUDA build plus the `sam2` extra.
+
+### Running the pipeline without the CLI
+
+Each step is still a normal Hydra entry point, so the original commands work:
 
 ```bash
-cd codes/sam2/step_2
-
-# Run SAM2 segmentation inference (supports multi-GPU)
-bash gsr_step2_example.sh
-
-# Merge segmentation results back into the tracker state
-bash merge_example.sh
+python -m soccermaster.tracklab.main -cn gsr_step_1_example
+python -m soccermaster.tracklab.main -cn gsr_step_3_example_accelerate
+python -m soccermaster.sam2_refine.inference --help
+python -m soccermaster.model.data.extract_frames --help
 ```
 
-### Step 3: Remaining Modules
+When invoking TrackLab directly, remember it uses the current working directory:
+`data_dir`, `model_dir` and `dataset.dataset_path` are `${project_dir}/...` by
+default, so pass `data_dir=...`, `model_dir=...` and `dataset.dataset_path=...`
+overrides — that is exactly what `soccermaster pipeline` does.
 
-Run the remaining pipeline modules: camera calibration, jersey number recognition, role classification, team assignment, etc.
+## Training and evaluation
 
 ```bash
-cd codes/sn-gamestate
-CUDA_VISIBLE_DEVICES=0 python -m tracklab.main -cn gsr_step_3_example_accelerate
+soccermaster train --config-path src/soccermaster/model/configs/pretrain.yaml --data-root ./data
+soccermaster eval  --config src/soccermaster/model/configs/pretrain.yaml --checkpoint ./weights/SoccerMaster
 ```
 
-> **Model selection for Step 3:**
->
-> For best results, use `Qwen2.5-VL-72B-Instruct` for jersey number (jn) recognition and `Qwen2.5-VL-7B-Instruct` for role classification (config: `gsr_step_3_example`). However, for faster inference speed and lower GPU memory consumption, you can use the accelerated config (`gsr_step_3_example_accelerate`) which merges both tasks into a single module and uses `Qwen2.5-VL-7B-Instruct` for both, with a minor trade-off in accuracy (Recommended).
-
-## TODO
-- [x] Add pretraining code.
-- [] Refine pretraining code.
-- [x] Release SoccerMaster checkpoints.
-- [x] Add instructions for quick start.
-- [x] Release datasets.
-- [x] Release data pipeline.
+Arguments are forwarded unchanged to the original `train.py` / `eval.py`, so all
+their flags are available (`--resume-training`, `--outputs-dir`, `--exp-name`, ...).
 
 ## Soccer Factory Dataset
 
@@ -244,14 +250,12 @@ Each video archive contains 1,000 sequences. The parts preserve the order of the
 
 ### Setup
 
-Place all downloaded files in a working directory, then follow the steps below.
-
 #### Step 1: Extract annotations
 
 ```bash
-mkdir -p datasets/SoccerNetGS/extracted_info
+mkdir -p data/SoccerNetGS/extracted_info
 tar xzf soccer_factory_annotations.tar.gz
-mv annotations/* datasets/SoccerNetGS/extracted_info/
+mv annotations/* data/SoccerNetGS/extracted_info/
 ```
 
 #### Step 2: Extract frames from videos
@@ -259,56 +263,47 @@ mv annotations/* datasets/SoccerNetGS/extracted_info/
 The video tar files contain H.264-encoded `.mp4` files. Use the provided script to decode them back into image sequences:
 
 ```bash
-# Option A: Extract directly from tar files (recommended, no intermediate extraction needed)
-python data/extract_frames.py \
+# Option A: decode directly from tar files (recommended, no intermediate extraction)
+python -m soccermaster.model.data.extract_frames \
     --tar_files soccer_factory_videos_part*.tar \
-    --output_dir datasets/SoccerNetGS/sn500 \
+    --output_dir data/SoccerNetGS/sn500 \
     --quality 95
 
-# Option B: Extract tar files first, then decode
+# Option B: extract tar files first, then decode
 tar xf soccer_factory_videos_part1.tar
-tar xf soccer_factory_videos_part2.tar
-# ... repeat for all parts ...
-python data/extract_frames.py \
+python -m soccermaster.model.data.extract_frames \
     --video_dir ./videos \
-    --output_dir datasets/SoccerNetGS/sn500 \
+    --output_dir data/SoccerNetGS/sn500 \
     --quality 95
 ```
 
-**Dependencies:** `ffmpeg` must be installed on your system (`apt install ffmpeg` or `brew install ffmpeg`).
-
-**Note:** The script supports resumption — if interrupted, simply re-run the same command and it will skip already-extracted sequences.
+`--output_dir` defaults to `<data_dir>/SoccerNetGS/sn500`. **Dependencies:** `ffmpeg`
+must be installed (`apt install ffmpeg` or `brew install ffmpeg`). The script
+supports resumption — re-running skips already-extracted sequences.
 
 #### Step 3: Verify the final directory structure
 
-After extraction, your directory should look like:
-
 ```
-codes/SoccerMaster/datasets/SoccerNetGS/
+data/SoccerNetGS/
 ├── extracted_info/                  # Annotations (JSON)
 │   ├── SNGS-10001.json
-│   ├── SNGS-10002.json
 │   └── ... (7000 files)
 └── sn500/                           # Image sequences
     ├── SNGS-10001/
     │   └── img1/
     │       ├── 000001.jpg
-    │       ├── 000002.jpg
     │       └── ... (up to ~750 frames per sequence)
-    ├── SNGS-10002/
-    │   └── img1/
-    │       └── ...
     └── ... (7000 directories)
 ```
 
 #### Step 4: Configure training
 
-In your training config (e.g., `configs/default.yaml`), set the paths:
+In `src/soccermaster/model/configs/default.yaml` (or on the command line):
 
 ```yaml
 USE_SOCCER_FACTORY_DATA: True
-SOCCER_FACTORY_DATA_DIR: ./datasets/SoccerNetGS/extracted_info
-SOCCER_FACTORY_DATA_IMAGE_DIR: ./datasets/SoccerNetGS/sn500
+SOCCER_FACTORY_DATA_DIR: ./data/SoccerNetGS/extracted_info
+SOCCER_FACTORY_DATA_IMAGE_DIR: ./data/SoccerNetGS/sn500
 USE_SOCCER_FACTORY_DATA_AMOUNT: 7000  # -1 to use all
 ```
 
@@ -326,15 +321,12 @@ Each JSON file (e.g., `SNGS-10001.json`) contains per-frame annotations keyed by
         "role": "player",
         "legibility_score": 0.95,
         "jersey_number": 7.0
-      },
-      ...
+      }
     ],
     "valid_cam_params": true,
     "K": [[...], [...], [...]],
     "R": [[...], [...], [...]]
-  },
-  "2": { ... },
-  ...
+  }
 }
 ```
 
@@ -347,8 +339,17 @@ Fields:
 - `K`: 3x3 camera intrinsic matrix.
 - `R`: 3x3 rotation matrix.
 
+## Licensing
+
+This repository vendors code from TrackLab (MIT), SAM 2 (Apache-2.0), the SoccerNet
+Game State Recognition and camera-calibration kits, TVCalib and others. See
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for the full list and the
+preserved license texts under `third_party/licenses/`.
+
 ## Citations
+
 If you find our work useful, please cite:
+
 ```bibtex
 @inproceedings{yang2025soccermaster,
   title={SoccerMaster: A Vision Foundation Model for Soccer Understanding},
