@@ -10,8 +10,8 @@ Typical use:
     out = sm.predict(model, "path/to/video_frames", task="detection")
 
 Everything here is a thin, explicit wrapper around the code under
-``soccermaster.foundation`` (the model) and ``soccermaster.gamestate`` /
-``soccermaster.tracking`` (the GSR pipeline). The underlying modules keep their
+``soccermaster.model`` (the model) and ``soccermaster.soccernet_gamestate`` /
+``soccermaster.tracklab`` (the GSR pipeline). The underlying modules keep their
 original behaviour; this module only resolves configuration and paths.
 """
 
@@ -48,11 +48,11 @@ TASK_TO_HEADS = {
 def load_config(name: str = "pretrain") -> dict:
     """Load a model config, following ``SUPER_CONFIG_PATH`` and retargeting weights.
 
-    ``name`` is a config stem under ``soccermaster/foundation/configs``
+    ``name`` is a config stem under ``soccermaster/model/configs``
     (``pretrain`` or ``default``). ``CKPT_PATH`` / ``TEXT_ENCODER_CKPT_PATH``
     are rewritten to point under :func:`soccermaster.paths.weights_dir`.
     """
-    from soccermaster.foundation.configs.util import load_super_config, yaml_to_dict
+    from soccermaster.model.configs.util import load_super_config, yaml_to_dict
 
     path = CONFIG_DIR / f"{name}.yaml"
     if not path.is_file():
@@ -95,7 +95,7 @@ def load_model(
     """
     import torch
 
-    from soccermaster.foundation.models.multi_task import MultiTaskingModel
+    from soccermaster.model.models.multi_task import MultiTaskingModel
 
     cfg = load_config(config)
     if checkpoint_dir is None:

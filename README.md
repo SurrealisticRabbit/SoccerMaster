@@ -177,7 +177,7 @@ soccermaster pipeline --dataset ./data/SoccerNetGS --steps 1,3 --out ./outputs/p
 | step | what it does | config |
 |---|---|---|
 | 1 | person detection + tracking | `gsr_step_1_example` |
-| 2 | SAM 2 mask refinement (needs the `sam2` extra) | `soccermaster.refine.inference` |
+| 2 | SAM 2 mask refinement (needs the `sam2` extra) | `soccermaster.sam2_refine.inference` |
 | 3 | calibration, jersey number, role, team assignment | `gsr_step_3_example_accelerate` |
 
 Outputs land in `outputs/pipeline/step1/sn-gamestate.pklz`,
@@ -197,10 +197,10 @@ Outputs land in `outputs/pipeline/step1/sn-gamestate.pklz`,
 Each step is still a normal Hydra entry point, so the original commands work:
 
 ```bash
-python -m soccermaster.tracking.main -cn gsr_step_1_example
-python -m soccermaster.tracking.main -cn gsr_step_3_example_accelerate
-python -m soccermaster.refine.inference --help
-python -m soccermaster.foundation.data.extract_frames --help
+python -m soccermaster.tracklab.main -cn gsr_step_1_example
+python -m soccermaster.tracklab.main -cn gsr_step_3_example_accelerate
+python -m soccermaster.sam2_refine.inference --help
+python -m soccermaster.model.data.extract_frames --help
 ```
 
 When invoking TrackLab directly, remember it uses the current working directory:
@@ -211,8 +211,8 @@ overrides — that is exactly what `soccermaster pipeline` does.
 ## Training and evaluation
 
 ```bash
-soccermaster train --config-path src/soccermaster/foundation/configs/pretrain.yaml --data-root ./data
-soccermaster eval  --config src/soccermaster/foundation/configs/pretrain.yaml --checkpoint ./weights/SoccerMaster
+soccermaster train --config-path src/soccermaster/model/configs/pretrain.yaml --data-root ./data
+soccermaster eval  --config src/soccermaster/model/configs/pretrain.yaml --checkpoint ./weights/SoccerMaster
 ```
 
 Arguments are forwarded unchanged to the original `train.py` / `eval.py`, so all
@@ -256,14 +256,14 @@ The video tar files contain H.264-encoded `.mp4` files. Use the provided script 
 
 ```bash
 # Option A: decode directly from tar files (recommended, no intermediate extraction)
-python -m soccermaster.foundation.data.extract_frames \
+python -m soccermaster.model.data.extract_frames \
     --tar_files soccer_factory_videos_part*.tar \
     --output_dir data/SoccerNetGS/sn500 \
     --quality 95
 
 # Option B: extract tar files first, then decode
 tar xf soccer_factory_videos_part1.tar
-python -m soccermaster.foundation.data.extract_frames \
+python -m soccermaster.model.data.extract_frames \
     --video_dir ./videos \
     --output_dir data/SoccerNetGS/sn500 \
     --quality 95
@@ -290,7 +290,7 @@ data/SoccerNetGS/
 
 #### Step 4: Configure training
 
-In `src/soccermaster/foundation/configs/default.yaml` (or on the command line):
+In `src/soccermaster/model/configs/default.yaml` (or on the command line):
 
 ```yaml
 USE_SOCCER_FACTORY_DATA: True

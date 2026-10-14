@@ -67,7 +67,7 @@ def _cmd_predict(args: argparse.Namespace) -> int:
 
 
 def _cmd_foundation_demo(args: argparse.Namespace) -> int:
-    from soccermaster.foundation import demo
+    from soccermaster.model import demo
 
     demo.main()
     return 0
@@ -128,8 +128,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 _PASSTHROUGH = {
-    "train": "soccermaster.foundation.train",
-    "eval": "soccermaster.foundation.eval",
+    "train": "soccermaster.model.train",
+    "eval": "soccermaster.model.eval",
 }
 
 

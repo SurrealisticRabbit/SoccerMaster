@@ -1,0 +1,11 @@
+_target_: soccermaster.tracklab.engine.OfflineTrackingEngine
+
+num_workers: ${num_cores}
+callbacks:
+  progress:
+    _target_: soccermaster.tracklab.callbacks.Progressbar
+    use_rich: ${use_rich}
+  ignored_regions:
+    _target_: soccermaster.tracklab.callbacks.IgnoredRegions
+    max_intersection: 0.9
+  vis: ${visualization}

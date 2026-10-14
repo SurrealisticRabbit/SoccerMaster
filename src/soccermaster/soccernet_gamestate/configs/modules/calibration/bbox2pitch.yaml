@@ -1,0 +1,2 @@
+_target_: soccermaster.soccernet_gamestate.calibration.bbox2pitch.Bbox2Pitch
+batch_size: 16

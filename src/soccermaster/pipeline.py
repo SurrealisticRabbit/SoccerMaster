@@ -1,8 +1,8 @@
 """Orchestration of the three-step SoccerNet game-state pipeline.
 
 The steps are executed exactly as documented in the upstream README -- each step
-is the same Hydra-driven entry point as before (``soccermaster.tracking.main``
-and ``soccermaster.refine``), invoked with explicit path overrides so nothing
+is the same Hydra-driven entry point as before (``soccermaster.tracklab.main``
+and ``soccermaster.sam2_refine``), invoked with explicit path overrides so nothing
 depends on the old repository layout or on hardcoded sequence ids.
 """
 
@@ -38,7 +38,7 @@ def _tracking_command(config: str, run_dir: Path, overrides: Sequence[str]) -> l
     return [
         sys.executable,
         "-m",
-        "soccermaster.tracking.main",
+        "soccermaster.tracklab.main",
         "-cn",
         config,
         f"hydra.run.dir={run_dir}",
@@ -106,7 +106,7 @@ def run_step2(
     command = [
         sys.executable,
         "-m",
-        "soccermaster.refine.inference",
+        "soccermaster.sam2_refine.inference",
         "--input_pklz",
         str(step1_state),
         "--dataset_root",
