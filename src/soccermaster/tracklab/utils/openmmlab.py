@@ -2,7 +2,6 @@ import os
 from pathlib import Path
 
 import requests
-from mim.utils import get_installed_path
 from tqdm import tqdm
 
 import logging
@@ -10,6 +9,13 @@ import logging
 log = logging.getLogger(__name__)
 
 def get_config_path(package, config_name):
+    # Imported here rather than at module scope: `mim` is the OpenMMLab package
+    # manager, needed only to locate mmdet/mmpose configs. Importing it at module
+    # level made every importer of this helper -- including
+    # wrappers/tracklet_agg, which is part of the soccer step-3 pipeline -- require
+    # openmim, a package the soccer path never uses.
+    from mim.utils import get_installed_path
+
     installed_path = Path(get_installed_path(package))
     # configs will be put in package/.mim in PR #68
     possible_config_paths = [
