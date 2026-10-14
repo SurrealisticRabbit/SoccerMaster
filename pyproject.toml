@@ -42,6 +42,13 @@ dependencies = [
     "tabulate>=0.9",
     "scipy>=1.10",
     "pyarrow>=14.0",
+    # On the model import path (soccermaster.model.models.multi_task pulls in the data
+    # modules, which import matplotlib, sympy and the ellipse fitter).
+    "matplotlib>=3.8",
+    "sympy>=1.12",
+    # NOT `ellipse` on PyPI -- that is an unrelated project about pictures of ellipses.
+    # The package that provides `from ellipse import LsqEllipse` is `lsq-ellipse`.
+    "lsq-ellipse>=2.2",
 ]
 
 [project.optional-dependencies]
@@ -58,11 +65,8 @@ pipeline = [
     "pycocotools>=2.0",
     "xmltodict>=0.13",
     "shapely>=2.0",
-    "sympy>=1.12",
-    "ellipse>=0.6",
     "scikit-image>=0.22",
     "requests>=2.31",
-    "matplotlib>=3.8",
     "yt-dlp>=2023.12",
 ]
 sam2 = [
