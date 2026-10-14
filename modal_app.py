@@ -15,16 +15,18 @@ Setup (once):
 
 Run:
 
-    modal run modal_app.py::doctor                  # read-only pre-flight
-    modal run modal_app.py::prepare                 # fetch weights into the volume
-    modal run modal_app.py::analyze --video my.mp4  # video in, data out
+    modal run modal_app.py --cmd doctor
+    modal run modal_app.py --cmd prepare
+    modal run modal_app.py --cmd video --url '<share link>'
+    modal run modal_app.py --cmd analyze --video fb_cut.mp4
+    modal run modal_app.py --cmd fetch
 
-The video is uploaded from ``./videos`` (see VIDEO_DIR) and the extracted data comes
-back under ``./modal-outputs`` (see fetch_outputs).
+Videos live in the ``soccermaster-videos`` volume rather than being baked into the image,
+so a large clip is downloaded once instead of re-uploaded into the image on every run.
+``--cmd fetch`` pulls the exported data back into ``./modal-outputs``.
 
-NOTE: this file has not been executed -- the author of the surrounding work had no
-Modal access. Treat it as a well-researched draft: the Modal API surface is correct as
-of Modal 1.x, but expect to fix one or two things on first run.
+``doctor`` has been run against the real app. The rest has not, so expect to fix one or
+two things on first use.
 """
 
 from __future__ import annotations
@@ -39,18 +41,23 @@ import modal
 # --------------------------------------------------------------------------- #
 
 REPO = "https://github.com/SurrealisticRabbit/SoccerMaster.git"
-REF = "main"  # pin to a tag or commit once you care about reproducibility
+#: Track main so the app always carries the latest pipeline fixes. Pinning to a tag is
+#: better for reproducibility, but only once that tag contains the fix you need -- the
+#: released v1.0.1-alpha predates the step-3 attention-backend fix, so tagging here would
+#: silently reintroduce a broken step 3.
+REF = "main"
 
-#: Local directory holding the video(s) to analyse. Mounted read-only.
-VIDEO_DIR = Path("videos")
-VIDEO_DIR.mkdir(exist_ok=True)
-
-#: Local directory the exported data is written back to.
+#: Local directory the exported data is written back to by ``--cmd fetch``.
 LOCAL_OUTPUT_DIR = Path("modal-outputs")
+
+#: Local folder to drop clips in for ``modal volume put``. Not uploaded automatically:
+#: putting a 1.6 GB video into the image would re-upload it on every run.
+VIDEO_DIR = Path("videos")
 
 #: Python version. 3.11 is the conservative choice: the package needs >=3.10, and
 #: some pinned dependencies (ultralytics==8.0.100) predate 3.13.
 PYTHON_VERSION = "3.11"
+GPU = "L40S"
 
 app = modal.App("soccermaster")
 
@@ -83,13 +90,18 @@ weights_volume = modal.Volume.from_name("soccermaster-weights", create_if_missin
 
 #: Pipeline outputs and exported data.
 outputs_volume = modal.Volume.from_name("soccermaster-outputs", create_if_missing=True)
+OUTPUTS_VOLUME_NAME = "soccermaster-outputs"
 
-#: SOCCERMASTER_HOME is the single root the package reads and writes. Mounting the two
+#: Input videos. Separate from weights so they can be pruned independently.
+videos_volume = modal.Volume.from_name("soccermaster-videos", create_if_missing=True)
+
+#: SOCCERMASTER_HOME is the single root the package reads and writes. Mounting the three
 #: volumes underneath it is what makes paths.weights_dir() and paths.outputs_dir()
 #: resolve to persistent storage.
 VOLUMES = {
     "/data/weights": weights_volume,
     "/data/outputs": outputs_volume,
+    "/data/videos": videos_volume,
 }
 
 ENV = {"SOCCERMASTER_HOME": "/data"}
@@ -104,6 +116,60 @@ ENV["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
 # --------------------------------------------------------------------------- #
 # Remote functions
 # --------------------------------------------------------------------------- #
+
+
+@app.function(image=image, volumes=VOLUMES, env=ENV, timeout=7200)
+def fetch_video(url: str = "", name: str = "") -> dict:
+    """Download a video into the videos volume, once.
+
+    Accepts a direct URL or a Google Drive share link. Drive is why this uses gdown
+    rather than a plain request: a file over ~100 MB does not come back from
+    ``uc?export=download`` at all -- it returns a "Virus scan warning" HTML page and
+    needs the confirmation token that gdown negotiates. Verified against the app's own
+    link: the confirm URL reports ``video/mp4`` and a real byte count.
+
+    The download persists in a volume, so it is paid for once. Baking the clip into the
+    image instead would re-upload it on every run.
+    """
+    import time
+    from pathlib import Path
+
+    import gdown
+
+    if not url:
+        return {"error": "url is required, e.g. --url 'https://drive.google.com/file/d/<id>/view'"}
+
+    dest_dir = Path("/data/videos")
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    # gdown derives a name from the URL, which for a Drive link is an opaque id, so
+    # accept an explicit name and otherwise let gdown choose.
+    output = str(dest_dir / name) if name else str(dest_dir) + os.sep
+
+    started = time.time()
+    out = gdown.download(url=url, output=output, fuzzy=True, quiet=False)
+    if not out or not Path(out).is_file():
+        return {"error": f"gdown could not download {url}"}
+
+    videos_volume.commit()
+    size = Path(out).stat().st_size
+    return {
+        "name": Path(out).name,
+        "path": str(out),
+        "size_gb": round(size / 1e9, 2),
+        "seconds": round(time.time() - started, 1),
+    }
+
+
+@app.function(image=image, volumes=VOLUMES, env=ENV, timeout=600)
+def list_videos() -> list[str]:
+    """Videos already in the volume, so nothing is downloaded twice."""
+    root = Path("/data/videos")
+    if not root.is_dir():
+        return []
+    return sorted(
+        f"{p.name}  ({p.stat().st_size / 1e9:.2f} GB)" for p in root.iterdir() if p.is_file()
+    )
 
 
 @app.function(image=image, volumes=VOLUMES, env=ENV, timeout=1800)
@@ -155,8 +221,8 @@ def prepare(names: list[str] | None = None) -> str:
 
 
 @app.function(
-    image=image.add_local_dir(VIDEO_DIR, remote_path="/videos"),
-    gpu="T4",
+    image=image,
+    gpu=GPU,
     volumes=VOLUMES,
     env=ENV,
     timeout=7200,
@@ -166,12 +232,17 @@ def analyze(
     video_id: int = 10001,
     steps: tuple[int, ...] = (1, 3),
     workers: int | None = None,
+    fps: float | None = None,
 ) -> dict:
     """Video in, structured data out.
 
     Decodes the video, runs the game-state steps, and exports every tracklet with its
     boxes (image pixels and pitch metres once calibration has run), jersey number, role
     and team. Returns a summary plus the exported files' contents.
+
+    ``fps`` decimates while decoding. Every step runs per frame, so on an 11-minute match
+    (~16,500 frames at 25 fps) step 3 means asking a 7B VLM about every player in every
+    frame -- pass ``fps=1`` for a first smoke test rather than waiting on the full set.
     """
     import json
     import traceback
@@ -179,9 +250,22 @@ def analyze(
 
     import soccermaster as sm
 
-    video_path = Path("/videos") / video
+    videos_dir = Path("/data/videos")
+    video_path = Path(video) if Path(video).is_absolute() else videos_dir / video
     if not video_path.is_file():
-        return {"error": f"no such video in the mount: {video_path}"}
+        return {
+            "error": f"no such video: {video_path}",
+            "available": (
+                sorted(p.name for p in videos_dir.iterdir() if p.is_file())
+                if videos_dir.is_dir()
+                else []
+            ),
+            "hint": "fetch one first: --cmd video --url '<share link>'",
+        }
+
+    # `workers` was accepted and ignored. num_cores is the override that actually
+    # controls dataloader workers, and doctor warns loudly when it exceeds the CPU count.
+    extra = [f"num_cores={workers}"] if workers else None
 
     try:
         result = sm.analyze_video(
@@ -191,6 +275,8 @@ def analyze(
             steps=list(steps),
             device="0",  # a single-GPU Modal worker; 0 is the visible device
             write_video=True,
+            fps=fps,
+            extra_overrides=extra,
         )
     except Exception:
         return {"error": traceback.format_exc()}
@@ -231,22 +317,59 @@ def list_outputs() -> list[str]:
 
 
 @app.local_entrypoint()
-def main(cmd: str = "doctor", video: str = "", video_id: int = 10001) -> None:
-    """``modal run modal_app.py --cmd <doctor|prepare|list|analyze>``"""
+def main(
+    cmd: str = "doctor",
+    video: str = "",
+    video_id: int = 10001,
+    url: str = "",
+    name: str = "",
+    fps: float = 0.0,
+    steps: str = "1,3",
+) -> None:
+    """``modal run modal_app.py --cmd <doctor|prepare|video|videos|analyze|list|fetch>``"""
+    import json
+    import subprocess
+
+    def as_steps() -> tuple[int, ...]:
+        parts = [p.strip() for p in str(steps).replace("|", ",").split(",")]
+        return tuple(int(p) for p in parts if p)
+
     if cmd == "doctor":
         print(doctor.remote())
     elif cmd == "prepare":
         print(prepare.remote())
+    elif cmd == "video":
+        print(json.dumps(fetch_video.remote(url=url, name=name), indent=2))
+    elif cmd == "videos":
+        for line in list_videos.remote():
+            print(line)
     elif cmd == "list":
         for line in list_outputs.remote():
             print(line)
     elif cmd == "analyze":
         if not video:
-            available = [p.name for p in VIDEO_DIR.iterdir() if p.is_file()]
-            raise SystemExit(f"--video is required. In {VIDEO_DIR}/: {available or 'nothing'}")
-        result = analyze.remote(video=video, video_id=video_id)
-        import json
-
+            known = list_videos.remote()
+            raise SystemExit(
+                "--video is required. In the videos volume:\n  "
+                + ("\n  ".join(known) if known else "(none -- add one with --cmd video)")
+            )
+        result = analyze.remote(
+            video=video,
+            video_id=video_id,
+            steps=as_steps(),
+            fps=fps or None,
+        )
         print(json.dumps(result, indent=2, default=str)[:8000])
+    elif cmd == "fetch":
+        # Shell out to the CLI rather than reaching for a volume API: `modal volume get`
+        # is the documented, stable way to pull a volume down, and it handles nesting.
+        LOCAL_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        proc = subprocess.run(
+            ["modal", "volume", "get", OUTPUTS_VOLUME_NAME, "/", str(LOCAL_OUTPUT_DIR)],
+            text=True,
+        )
+        print(f"\nexit {proc.returncode}; data is under {LOCAL_OUTPUT_DIR}/")
     else:
-        raise SystemExit(f"unknown cmd {cmd!r}; use doctor, prepare, list or analyze")
+        raise SystemExit(
+            f"unknown cmd {cmd!r}; use doctor, prepare, video, videos, analyze, list or fetch"
+        )
