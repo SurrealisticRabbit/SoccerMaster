@@ -251,25 +251,29 @@ def export_state(
 
     dropped_from_csv = [c for c in detections.columns if c in BULKY_COLUMNS]
 
-    if not detections.empty:
-        flat = flatten_for_csv(detections)
-        csv_path = out_dir / f"{prefix}_detections.csv"
-        flat.to_csv(csv_path, index=False)
-        written["detections_csv"] = csv_path
+    # Always write the detection files, even when there are no detections. A run that
+    # found nobody is a legitimate outcome (a clip with no players, or a detector
+    # confidence threshold that filtered everything), and callers should not have to
+    # guess whether a key is missing -- an empty CSV with a header is far more useful
+    # than a KeyError.
+    flat = flatten_for_csv(detections)
+    csv_path = out_dir / f"{prefix}_detections.csv"
+    flat.to_csv(csv_path, index=False)
+    written["detections_csv"] = csv_path
 
-        if write_jsonl:
-            jsonl_path = out_dir / f"{prefix}_detections.jsonl"
-            with jsonl_path.open("w", encoding="utf-8") as fp:
-                for record in _records(detections):
-                    fp.write(json.dumps(record, ensure_ascii=False) + "\n")
-            written["detections_jsonl"] = jsonl_path
+    if write_jsonl:
+        jsonl_path = out_dir / f"{prefix}_detections.jsonl"
+        with jsonl_path.open("w", encoding="utf-8") as fp:
+            for record in _records(detections):
+                fp.write(json.dumps(record, ensure_ascii=False) + "\n")
+        written["detections_jsonl"] = jsonl_path
 
-        tracks = build_tracks(detections)
-        tracks_path = out_dir / f"{prefix}_tracks.json"
-        tracks_path.write_text(
-            json.dumps(tracks, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-        written["tracks_json"] = tracks_path
+    tracks = build_tracks(detections)
+    tracks_path = out_dir / f"{prefix}_tracks.json"
+    tracks_path.write_text(
+        json.dumps(tracks, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    written["tracks_json"] = tracks_path
 
     if not images.empty:
         flat_images = flatten_for_csv(images)
