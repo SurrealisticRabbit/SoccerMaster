@@ -4,6 +4,8 @@
 /data/
 /weights/
 /outputs/
+# scratch root the example notebook uses outside Colab (SOCCERMASTER_HOME)
+/soccermaster_home/
 
 __pycache__/
 *.py[cod]
