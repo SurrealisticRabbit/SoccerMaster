@@ -201,6 +201,19 @@ def list_videos() -> list[str]:
     )
 
 
+@app.function(image=image, gpu=GPU, volumes=VOLUMES, env=ENV, timeout=300)
+def gpu_check() -> dict:
+    """Confirm the GPU is attached and actually works, without running the pipeline.
+
+    ``doctor`` cannot answer this. A Modal function's GPU spec is fixed at definition
+    time and ``doctor`` deliberately declares none, so that a pre-flight costs nothing --
+    which means it always reports "no CUDA device visible", correctly, about its own
+    CPU-only container. That is easy to misread as "the GPU is not working", so this is
+    the GPU-attached counterpart. It costs a few seconds of GPU time.
+    """
+    return describe_gpu()
+
+
 @app.function(image=image, volumes=VOLUMES, env=ENV, timeout=1800)
 def doctor(steps: str = "1,3") -> str:
     """Read-only pre-flight. Cheap enough to run before every attempt.
@@ -243,6 +256,40 @@ def doctor(steps: str = "1,3") -> str:
 
     out = proc.stdout + "\n".join(lines)
     return out + ("\n--- stderr ---\n" + proc.stderr if proc.stderr else "")
+
+
+def describe_gpu() -> dict:
+    """What GPU this container has, proven by running a kernel rather than by a flag.
+
+    ``torch.cuda.is_available()`` only says a device is visible; the matmul below says
+    it can actually execute, which is the thing worth knowing before a long run.
+    """
+    import torch
+
+    report: dict = {
+        "torch": torch.__version__,
+        "cuda_build": torch.version.cuda,
+        "cuda_available": torch.cuda.is_available(),
+    }
+    if not torch.cuda.is_available():
+        return report
+
+    major, minor = torch.cuda.get_device_capability()
+    report.update(
+        device_count=torch.cuda.device_count(),
+        device_name=torch.cuda.get_device_name(0),
+        capability=f"{major}.{minor}",
+        vram_gb=round(torch.cuda.get_device_properties(0).total_memory / 1e9, 1),
+        # FlashAttention-2 needs Ampere or newer; on Turing the import succeeds and the
+        # kernels fail, so this is the capability that actually decides the backend.
+        flash_attn_usable=major >= 8,
+    )
+    try:
+        x = torch.randn(512, 512, device="cuda", dtype=torch.bfloat16)
+        report["bf16_matmul_ok"] = bool(torch.isfinite(x @ x).all().item())
+    except Exception as exc:  # noqa: BLE001 - the report is more useful than a raise
+        report["bf16_matmul_ok"] = f"{type(exc).__name__}: {exc}"
+    return report
 
 
 def default_weight_names(steps: tuple[int, ...] = (1, 3)) -> list[str]:
@@ -339,6 +386,12 @@ def analyze(
             "hint": "fetch one first: --cmd video --url '<share link>'",
         }
 
+    # Report the GPU before anything else, so every run states which card it got and
+    # that it can execute. Without this the only place the GPU appeared was implicitly,
+    # in how long the tracking took.
+    gpu = describe_gpu()
+    print(f"gpu      : {json.dumps(gpu)}", flush=True)
+
     # `workers` was accepted and ignored. num_cores is the override that actually
     # controls dataloader workers, and doctor warns loudly when it exceeds the CPU count.
     extra = [f"num_cores={workers}"] if workers else None
@@ -359,6 +412,7 @@ def analyze(
 
     # Read the exported data back so the caller gets it without a volume round-trip.
     payload: dict = {
+        "gpu": gpu,
         "out_dir": str(result["out_dir"]),
         "exports": {k: str(v) for k, v in result["exports"].items()},
         "videos": [str(v) for v in result["videos"]],
@@ -402,7 +456,7 @@ def main(
     fps: float = 0.0,
     steps: str = "1,3",
 ) -> None:
-    """``modal run modal_app.py --cmd <doctor|prepare|video|videos|analyze|list|fetch>``"""
+    """``modal run modal_app.py --cmd <doctor|gpu|prepare|video|videos|analyze|list|fetch>``"""
     import json
     import subprocess
 
@@ -412,6 +466,8 @@ def main(
 
     if cmd == "doctor":
         print(doctor.remote())
+    elif cmd == "gpu":
+        print(json.dumps(gpu_check.remote(), indent=2))
     elif cmd == "prepare":
         print(prepare.remote())
     elif cmd == "video":
@@ -447,5 +503,5 @@ def main(
         print(f"\nexit {proc.returncode}; data is under {LOCAL_OUTPUT_DIR}/")
     else:
         raise SystemExit(
-            f"unknown cmd {cmd!r}; use doctor, prepare, video, videos, analyze, list or fetch"
+            f"unknown cmd {cmd!r}; use doctor, gpu, prepare, video, videos, analyze, list or fetch"
         )
