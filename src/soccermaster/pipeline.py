@@ -160,10 +160,13 @@ def _reid_scratch_overrides(run_dir: Path) -> list[str]:
     directory never pre-exists. ``job_id`` is the config's own knob for exactly this
     ("${oc.env:SLURM_JOBID,0}"); it is unused here because we do not run under Slurm.
     """
-    import uuid
+    import random
 
     scratch = Path(run_dir).resolve() / "reid"
-    job_id = uuid.uuid4().hex[:8]
+    # Must be an int: prtreid merges our config over a yacs CfgNode whose
+    # project.job_id came from "${oc.env:SLURM_JOBID,0}", so a string here fails
+    # with "Type mismatch (<class 'int'> vs. <class 'str'>)".
+    job_id = random.randint(1, 2**31 - 1)
     return [
         f"modules.reid.save_path={scratch}",
         f"modules.reid.job_id={job_id}",
