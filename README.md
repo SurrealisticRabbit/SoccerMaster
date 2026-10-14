@@ -30,7 +30,8 @@ Official implementation of **SoccerMaster: A Vision Foundation Model for Soccer 
 ## Repository layout
 
 This fork consolidates the original multi-project tree into a **single installable
-package** under `src/`:
+package** under `src/`. Package folders are named after their upstream so you can
+tell at a glance what came from where:
 
 ```
 pyproject.toml            # one distribution: "soccermaster"
@@ -40,14 +41,21 @@ src/soccermaster/
 ├── downloads.py          # weight fetching (Hugging Face / Google Drive)
 ├── paths.py              # data / weights / outputs locations
 ├── pipeline.py           # 3-step game-state pipeline runner
-├── foundation/           # the SoccerMaster model (was codes/SoccerMaster)
-├── tracking/             # TrackLab tracking engine (was codes/tracklab)
-├── gamestate/            # SoccerNet GSR dev kit (was codes/sn-gamestate)
-├── refine/               # SAM 2 mask refinement (was codes/sam2/step_2)
+├── model/                # SoccerMaster foundation model        — this paper
+├── tracklab/             # TrackLab tracking framework          — vendored (MIT)
+├── soccernet_gamestate/  # SoccerNet game-state reconstruction  — vendored
+│   └── plugins/calibration/   # TVCalib, PnLCalib, NBJW, sn_calibration_baseline
+├── sam2_refine/          # SAM 2 mask refinement                — vendored glue
 └── resources/            # weight manifest and small assets
 third_party/sam2/         # vendored SAM 2 library (optional, not installed by default)
-docs/                     # upstream TrackLab and SoccerNet-GSR documentation
+docs/                     # TrackLab, SoccerNet-GSR and calibration documentation
 ```
+
+`model/`, `api.py`, `cli.py`, `pipeline.py` and `downloads.py` are ours. Everything
+under `tracklab/`, `soccernet_gamestate/`, `sam2_refine/`, `third_party/` and the
+vendored bits of `docs/` came from other projects — see
+[`PROVENANCE.md`](PROVENANCE.md) for the full attribution, including which
+pretrained weights come from Google, SoccerNet, Alibaba and Meta.
 
 ## Quick Start
 

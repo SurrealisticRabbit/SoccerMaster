@@ -28,6 +28,9 @@ License texts preserved during the consolidation:
 Original file headers are retained inside the moved files; this project does not
 relicense any vendored code.
 
+See [`PROVENANCE.md`](PROVENANCE.md) for the original-to-consolidated path mapping
+and for the provenance of each pretrained-weight manifest entry.
+
 > **Note:** the upstream SoccerMaster repository does not ship a top-level
 > `LICENSE` file, so no root license is asserted here. Add one only as a
 > deliberate maintainer decision.
