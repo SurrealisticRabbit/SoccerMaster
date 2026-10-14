@@ -1,4 +1,4 @@
-import posetrack21.trackeval as trackeval 
+from .. import trackeval 
 from soccermaster.tracklab.plugins.eval.posetrack21.api.base_api import BaseEvaluator
 
 

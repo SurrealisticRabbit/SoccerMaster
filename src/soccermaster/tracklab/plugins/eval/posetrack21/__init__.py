@@ -1,4 +1,4 @@
-import posetrack21.api as api 
-import soccermaster.tracklab.plugins.eval.posetrack21.trackeval as trackeval
+from . import api
+from . import trackeval
 
 __all__ = ['api',  'trackeval']
