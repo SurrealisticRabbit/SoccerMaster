@@ -75,9 +75,18 @@ pip install -e .
 Optional extras:
 
 ```bash
-pip install -e ".[sam2]"    # SAM 2 runtime deps, needed for pipeline step 2
-pip install -e ".[train]"   # flash-attn, only needed to train
-pip install -e ".[dev]"     # ruff + pytest
+pip install -e ".[pipeline]"  # everything the 3-step pipeline imports (steps 1 and 3)
+pip install -e ".[sam2]"      # SAM 2 runtime deps, needed for pipeline step 2
+pip install -e ".[train]"     # flash-attn, only needed to train
+pip install -e ".[dev]"       # ruff + pytest
+```
+
+The base install is deliberately lean: it covers `import soccermaster`,
+`load_model` and `predict`. Running the game-state pipeline needs the `pipeline`
+extra, whose dependencies are only reachable from the pipeline modules:
+
+```bash
+soccermaster pipeline --dataset ./data/SoccerNetGS --steps 1,3 --device 0
 ```
 
 The SAM 2 *library* itself is vendored at `third_party/sam2` and is not part of the
@@ -86,6 +95,24 @@ installed wheel. Install it as well if you want to run step 2:
 ```bash
 pip install -e third_party/sam2
 ```
+
+### Installing on Colab / Kaggle
+
+Install straight from GitHub (`@main`, or a tag once you cut one):
+
+```python
+!pip install "soccermaster[pipeline] @ git+https://github.com/SurrealisticRabbit/SoccerMaster.git@main"
+```
+
+Two caveats on hosted notebooks:
+
+- **Do not let pip resolve `torch`.** Colab and Kaggle ship a CUDA-matched build, and
+  this project pins `torch>=2.4,<2.6`, so a normal install may *downgrade* the
+  working torch and break CUDA. Install the package with `--no-deps` alongside an
+  explicit dependency list, or accept the downgrade knowingly.
+- **`import soccermaster` needs no third-party packages at all.** The package
+  re-exports its API lazily, so the import succeeds before any dependency is
+  installed — useful to confirm the install landed.
 
 ### 2. Download pretrained weights
 
