@@ -6,7 +6,7 @@ from PIL import Image
 import numpy as np
 import cv2
 import copy
-from soccermaster.model.calibration.src.evaluate_extremities import mirror_labels
+from soccermaster.soccernet_gamestate.plugins.calibration.sn_calibration_baseline.evaluate_extremities import mirror_labels
 
 try:
     from torchvision.transforms.functional import _get_inverse_affine_matrix as get_inv_affine_matrix
