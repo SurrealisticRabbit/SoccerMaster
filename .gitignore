@@ -11,6 +11,10 @@
 .kaggle-outputs/
 notebook.ipynb
 
+# Modal app scratch: videos go up, exported data comes back
+/videos/
+/modal-outputs/
+
 __pycache__/
 *.py[cod]
 *$py.class
