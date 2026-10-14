@@ -4,7 +4,7 @@ visualizers:
   test:
     _target_: soccermaster.tracking.visualization.DefaultDetectionVisualizer
 #  ellipse:
-#    _target_: tracklab.visualization.EllipseDetectionVisualizer
+#    _target_: soccermaster.tracking.visualization.EllipseDetectionVisualizer
   track_line:
     _target_: soccermaster.tracking.visualization.TrackingLineVisualizer
 

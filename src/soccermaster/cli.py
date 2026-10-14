@@ -117,18 +117,29 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=_cmd_foundation_demo)
 
     # train / eval ----------------------------------------------------------
-    p = sub.add_parser("train", help="train the foundation model (forwards to train.py)")
-    p.add_argument("args", nargs=argparse.REMAINDER)
-    p.set_defaults(func=lambda a: _passthrough("soccermaster.foundation.train", a.args))
-
-    p = sub.add_parser("eval", help="evaluate the foundation model (forwards to eval.py)")
-    p.add_argument("args", nargs=argparse.REMAINDER)
-    p.set_defaults(func=lambda a: _passthrough("soccermaster.foundation.eval", a.args))
+    # Arguments are forwarded verbatim to the original scripts, so these are
+    # intercepted in main() before argparse runs.
+    sub.add_parser("train", help="train the foundation model (forwards all args to train.py)",
+                   add_help=False)
+    sub.add_parser("eval", help="evaluate the foundation model (forwards all args to eval.py)",
+                   add_help=False)
 
     return parser
 
 
+_PASSTHROUGH = {
+    "train": "soccermaster.foundation.train",
+    "eval": "soccermaster.foundation.eval",
+}
+
+
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+
+    # train/eval take the upstream scripts' own flags; forward them untouched.
+    if argv and argv[0] in _PASSTHROUGH:
+        return _passthrough(_PASSTHROUGH[argv[0]], argv[1:])
+
     parser = build_parser()
     args = parser.parse_args(argv)
     return args.func(args)
