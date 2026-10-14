@@ -119,6 +119,12 @@ VOLUMES = {
 
 ENV = {"SOCCERMASTER_HOME": "/data"}
 
+#: albumentations performs a network update check at import time, which is pure noise
+#: here and a second way for an import to block on the network. The check prints a
+#: warning we saw in every doctor run; this removes both the warning and the dependency
+#: on reaching PyPI before a pipeline step can even start.
+ENV["NO_ALBUMENTATIONS_UPDATE"] = "1"
+
 #: Set explicitly rather than relying only on the package's own default. torch >= 2.6
 #: flipped torch.load's weights_only to True, which breaks the third-party checkpoint
 #: loaders in this stack (prtreid, ultralytics). soccermaster sets this itself for the
