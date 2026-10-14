@@ -34,14 +34,35 @@ def sequence_name(video_id: int) -> str:
 
 
 def _run(command: Sequence[str], cwd: Path, extra_env: dict | None = None) -> None:
+    """Run a pipeline step, showing its output and surfacing its error.
+
+    The step runs in a subprocess (Hydra owns that entry point). Its output is
+    captured, echoed, and on failure re-raised with the tail of stderr attached --
+    without this a failing step surfaces only as ``CalledProcessError`` with no
+    reason, which is the worst possible thing to debug from a notebook.
+    """
     import copy
     import os
 
     env = copy.deepcopy(os.environ)
     if extra_env:
         env.update(extra_env)
-    print("+ " + " ".join(str(c) for c in command))
-    subprocess.run([str(c) for c in command], cwd=str(cwd), env=env, check=True)
+
+    print("+ " + " ".join(str(c) for c in command), flush=True)
+    result = subprocess.run(
+        [str(c) for c in command], cwd=str(cwd), env=env,
+        capture_output=True, text=True,
+    )
+    if result.stdout:
+        print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+    if result.stderr:
+        print(result.stderr, end="" if result.stderr.endswith("\n") else "\n")
+    if result.returncode:
+        tail = "\n".join((result.stderr or result.stdout or "").strip().splitlines()[-25:])
+        raise RuntimeError(
+            f"step failed (exit {result.returncode}): {' '.join(str(c) for c in command)}\n"
+            f"--- last output ---\n{tail}"
+        )
 
 
 def _tracking_command(config: str, run_dir: Path, overrides: Sequence[str]) -> list[str]:
