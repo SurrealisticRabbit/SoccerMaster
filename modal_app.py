@@ -41,11 +41,20 @@ import modal
 # --------------------------------------------------------------------------- #
 
 REPO = "https://github.com/SurrealisticRabbit/SoccerMaster.git"
-#: Track main so the app always carries the latest pipeline fixes. Pinning to a tag is
-#: better for reproducibility, but only once that tag contains the fix you need -- the
-#: released v1.0.1-alpha predates the step-3 attention-backend fix, so tagging here would
-#: silently reintroduce a broken step 3.
-REF = "main"
+
+#: A specific commit, NOT a branch name -- and that is not just about reproducibility.
+#: Modal caches image layers by their definition string, and `@main` is a fixed string
+#: that never changes as the branch advances, so the cache never invalidates and the
+#: container keeps running whatever `main` pointed at when the image was first built.
+#: That happened here: `doctor` reported `soccermaster 1.0.1a0` (the tag commit, i.e.
+#: what `main` was at the time) while `main` had already moved on, so the step-3
+#: attention/dtype fixes and `--fps` were silently absent. Pinning a SHA changes the
+#: definition string, which forces the rebuild, and makes the installed code version
+#: explicit in this file. Bump it on each push you want deployed.
+#:
+#: Note this governs only the *package* installed from git. modal_app.py itself is
+#: uploaded from local disk on every run, so edits here take effect immediately.
+REF = "1d57965205199e3ddea01890536f2e8ac52f03a1"
 
 #: Local directory the exported data is written back to by ``--cmd fetch``.
 LOCAL_OUTPUT_DIR = Path("modal-outputs")
