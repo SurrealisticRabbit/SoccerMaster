@@ -7,8 +7,19 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models, transforms
 
-from transformers import Qwen2_5_VLForConditionalGeneration, Qwen3VLMoeForConditionalGeneration, AutoProcessor
+from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
 from qwen_vl_utils import process_vision_info
+
+# `Qwen3VLMoeForConditionalGeneration` only exists in transformers >= 4.57, but this
+# package pins transformers < 4.52 (see pyproject: 5.x flattened SiglipVisionModel and
+# 4.57.x is broken). Importing it unconditionally made this module unimportable, which
+# took the whole step-3 `jersey_and_role` target down even for Qwen2.5 checkpoints that
+# never touch it. It is only needed when the configured model path selects Qwen3, so
+# guard the import and fail loudly at that point instead.
+try:
+    from transformers import Qwen3VLMoeForConditionalGeneration
+except ImportError:  # pragma: no cover - depends on the installed transformers
+    Qwen3VLMoeForConditionalGeneration = None
 
 from soccermaster.tracklab.utils.collate import default_collate, Unbatchable
 from soccermaster.tracklab.pipeline.detectionlevel_module import DetectionLevelModule
@@ -32,6 +43,14 @@ class QWEN2_5VL_ROLE_BATCH(DetectionLevelModule):
         if '2.5' in self.model_path:
             model_api = Qwen2_5_VLForConditionalGeneration
         elif '3' in self.model_path:
+            if Qwen3VLMoeForConditionalGeneration is None:
+                raise RuntimeError(
+                    f"model_path {self.model_path!r} selects Qwen3-VL, which needs "
+                    "Qwen3VLMoeForConditionalGeneration from transformers >= 4.57, "
+                    "but the installed transformers does not provide it. Install a "
+                    "newer transformers, or point model_path at a Qwen2.5-VL "
+                    "checkpoint."
+                )
             model_api = Qwen3VLMoeForConditionalGeneration
         else:
             raise ValueError(f"Model path {self.model_path} is not supported")
