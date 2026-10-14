@@ -1,4 +1,17 @@
 import os
+
+# Set before anything imports torch.serialization. torch >= 2.6 defaults
+# torch.load's weights_only to True, which breaks the third-party checkpoint loaders
+# in this stack (ultralytics, prtreid) that call torch.load(path) plainly. Some are
+# patched in soccermaster's own code, but prtreid is an external package, so we rely
+# on torch's documented escape hatch. The checkpoints are model weights fetched by
+# the pipeline itself (Zenodo with md5 verification, or Hugging Face), i.e. the
+# trusted-source case the flag exists for. Set here as well as in
+# soccermaster.pipeline._run so that a direct `python -m soccermaster.tracklab.main`
+# works, not only runs launched through the pipeline API.
+os.environ.setdefault("TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD", "1")
+os.environ["HYDRA_FULL_ERROR"] = "1"
+
 import rich.logging
 import torch
 import hydra
@@ -14,7 +27,6 @@ from soccermaster.tracklab.pipeline import Pipeline
 from soccermaster.tracklab.utils import wandb
 
 
-os.environ["HYDRA_FULL_ERROR"] = "1"
 log = logging.getLogger(__name__)
 
 warnings.filterwarnings("ignore")

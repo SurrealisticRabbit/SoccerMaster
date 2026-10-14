@@ -45,6 +45,21 @@ def _run(command: Sequence[str], cwd: Path, extra_env: dict | None = None) -> No
     import os
 
     env = copy.deepcopy(os.environ)
+    # torch >= 2.6 flipped torch.load's weights_only default to True, which breaks
+    # every third-party checkpoint loader in this stack that does a plain
+    # torch.load(path) -- ultralytics, prtreid, and anything else in the vendored
+    # trackers. Some we can fix in our own code (see
+    # tracklab/utils/ultralytics_compat.py); prtreid is an external package we cannot
+    # edit, and it fails with:
+    #
+    #   _pickle.UnpicklingError: Weights only load failed. ...
+    #   Unsupported global: GLOBAL numpy.core.multiarray.scalar
+    #
+    # So set torch's documented escape hatch for the child process. The checkpoints
+    # this loads are model weights fetched by the pipeline itself -- from Zenodo with
+    # md5 verification, or from Hugging Face -- i.e. the same trust level as any
+    # pretrained weights, and exactly the "trusted source" case torch documents.
+    env.setdefault("TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD", "1")
     if extra_env:
         env.update(extra_env)
 
