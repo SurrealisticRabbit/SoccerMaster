@@ -12,6 +12,8 @@ Each test here corresponds to something that actually failed during the refactor
 from __future__ import annotations
 
 import importlib
+import subprocess
+import sys
 
 import pytest
 
@@ -75,8 +77,6 @@ def test_public_api_is_lazy() -> None:
     before any dependency is installed, to confirm the install landed. Checked in a
     subprocess, because this test module has already imported things.
     """
-    import subprocess
-    import sys
 
     result = subprocess.run(
         [
@@ -128,3 +128,61 @@ def test_torchreid_cmap_lookup_works() -> None:
     assert hasattr(cm, "get_cmap"), "the matplotlib compatibility shim did not install"
     assert cm.get_cmap("hsv").name == "hsv"
     assert cm.get_cmap("jet", 8).N == 8
+
+
+# The modules step 1 actually resolves its `detector`, `track` and `reid` entries to,
+# each paired with the import that proves its dependency set is present.
+STEP1_TARGETS = [
+    ("soccermaster.soccernet_gamestate.detect_multiple.yolov8_person_api", "ultralytics"),
+    ("soccermaster.tracklab.wrappers", "SoccerNet"),
+    ("soccermaster.soccernet_gamestate.reid.prtreid_api", "prtreid"),
+]
+
+
+@pytest.mark.heavy
+@pytest.mark.parametrize("module,requires", STEP1_TARGETS)
+def test_step1_targets_import_in_a_fresh_process(module: str, requires: str) -> None:
+    """Import a step-1 target in a cold process, the way `soccermaster doctor` does.
+
+    Doing this in-process is not equivalent, and that is not hypothetical: the
+    target-resolution test in test_pipeline_configs.py passed while `doctor` reported
+    step 1's reid target as unresolvable, because a *previous test in the same process*
+    had already imported soccermaster.tracklab.wrappers, which installs the
+    matplotlib.cm.get_cmap shim globally. Only a fresh interpreter has the import state
+    `doctor` starts from.
+    """
+    pytest.importorskip(requires)
+
+    result = subprocess.run(
+        [sys.executable, "-c", f"import {module}"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"importing {module} in a fresh process failed (exit {result.returncode})\n"
+        f"{result.stderr}"
+    )
+
+
+@pytest.mark.heavy
+@pytest.mark.parametrize("package", ["soccermaster.tracklab", "soccermaster.soccernet_gamestate"])
+def test_package_import_installs_the_cmap_shim(package: str) -> None:
+    """Importing either package must install the shim before any submodule can need it.
+
+    The shim has to be in place before torchreid is imported, and torchreid is imported
+    by deeper modules in both trees, so the guarantee has to come from the package
+    __init__ rather than from a line near the eventual import. Checked cold, since a
+    warm interpreter may already have it.
+    """
+    pytest.importorskip("matplotlib")
+
+    code = (
+        "import sys, matplotlib.cm as cm;"
+        f"import {package};"
+        "sys.exit(0 if hasattr(cm, 'get_cmap') else 3)"
+    )
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert result.returncode == 0, (
+        f"importing {package} did not install the matplotlib.cm.get_cmap shim "
+        f"(exit {result.returncode})\n{result.stderr}"
+    )
