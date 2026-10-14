@@ -2,7 +2,7 @@ import logging
 import os
 from abc import ABC
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import pandas as pd
 
 
@@ -23,7 +23,11 @@ class TrackingSet:
     video_metadatas: pd.DataFrame
     image_metadatas: pd.DataFrame
     detections_gt: pd.DataFrame
-    image_gt: pd.DataFrame = pd.DataFrame(columns=["video_id"])
+    # A DataFrame default has to go through default_factory: dataclasses reject
+    # mutable defaults outright (ValueError: "mutable default ... is not allowed")
+    # on Python 3.11+, so the bare `= pd.DataFrame(...)` upstream used made every
+    # module importing this fail at import time on 3.11/3.12/3.13.
+    image_gt: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=["video_id"]))
 
 
 class TrackingDataset(ABC):
