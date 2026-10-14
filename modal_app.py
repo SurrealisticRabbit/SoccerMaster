@@ -56,9 +56,10 @@ REPO = "https://github.com/SurrealisticRabbit/SoccerMaster.git"
 #: uploaded from local disk on every run, so edits here take effect immediately.
 #: Bump this when anything under ``src/`` changes, or the image keeps serving the old
 #: package: Modal caches layers by definition string and this is what makes it specific.
-#: Current value carries the live-output fix (a step's output streams instead of being
-#: buffered until exit) and the bounded weight-download timeout.
-REF = "26f183f244c5b0738ddc2c095c87c71a5020dd56"
+#: Current value carries the weight-cache self-heal: downloads land in ``.part`` files and
+#: are moved into place only once verified, so an interrupted run can no longer leave a
+#: truncated checkpoint that fails its md5 check forever after.
+REF = "93b8d86a420f682945a68ab71b53ba8d28c4e358"
 
 #: Local directory the exported data is written back to by ``--cmd fetch``.
 LOCAL_OUTPUT_DIR = Path("modal-outputs")
