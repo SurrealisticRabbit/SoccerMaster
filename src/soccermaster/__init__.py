@@ -16,6 +16,7 @@ from __future__ import annotations
 __version__ = "0.1.0"
 
 __all__ = [
+    "analyze_video",
     "load_config",
     "load_model",
     "predict",
@@ -26,6 +27,7 @@ __all__ = [
 ]
 
 _LAZY = {
+    "analyze_video": "soccermaster.api",
     "load_config": "soccermaster.api",
     "load_model": "soccermaster.api",
     "predict": "soccermaster.api",

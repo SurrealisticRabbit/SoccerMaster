@@ -235,3 +235,32 @@ def run_pipeline(
         device=device,
         extra_overrides=extra_overrides,
     )
+
+
+def analyze_video(
+    video: str | Path,
+    out_dir: str | Path | None = None,
+    eval_set: str = "sn500",
+    video_id: int = 10001,
+    steps: Sequence[int] = (1, 3),
+    device: str = "cuda",
+    write_video: bool = True,
+    extra_overrides: Sequence[str] | None = None,
+) -> dict:
+    """Analyse one video: decode it, run the game-state steps, export the data.
+
+    Returns a dict with ``exports`` (CSV/JSONL/JSON paths), ``states``, ``videos``
+    and the output directory. This is the video-in / data-out entry point.
+    """
+    from soccermaster.pipeline import analyze_video as _analyze
+
+    return _analyze(
+        video=video,
+        out_dir=out_dir,
+        eval_set=eval_set,
+        video_id=video_id,
+        steps=steps,
+        device=device,
+        write_video=write_video,
+        extra_overrides=extra_overrides,
+    )

@@ -72,6 +72,34 @@ def _cmd_foundation_demo(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_analyze(args: argparse.Namespace) -> int:
+    from soccermaster import pipeline
+
+    result = pipeline.analyze_video(
+        video=args.video,
+        out_dir=args.out,
+        eval_set=args.eval_set,
+        video_id=args.video_id,
+        steps=args.steps,
+        device=args.device,
+        quality=args.quality,
+        write_video=not args.no_video,
+    )
+    print(f"\noutput directory: {result['out_dir']}")
+    if result["exports"]:
+        print("data:\n  " + "\n  ".join(str(p) for p in result["exports"].values()))
+    return 0
+
+
+def _cmd_export(args: argparse.Namespace) -> int:
+    from soccermaster import export
+
+    written = export.export_state(args.state, args.out, prefix=args.prefix)
+    for kind, path in written.items():
+        print(f"{kind:<18} {path}")
+    return 0
+
+
 def _cmd_doctor(args: argparse.Namespace) -> int:
     from soccermaster import preflight
 
@@ -120,6 +148,26 @@ def build_parser() -> argparse.ArgumentParser:
     # foundation-demo -------------------------------------------------------
     p = sub.add_parser("foundation-demo", help="smoke-test the model with random inputs")
     p.set_defaults(func=_cmd_foundation_demo)
+
+    # analyze ---------------------------------------------------------------
+    p = sub.add_parser("analyze", help="video in, structured data out (plus an annotated video)")
+    p.add_argument("video", type=Path, help="the video file")
+    p.add_argument("--out", type=Path, default=None, help="output directory")
+    p.add_argument("--eval-set", default="sn500", help="split name used for the layout")
+    p.add_argument("--video-id", type=int, default=10001,
+                   help="sequence number; the directory becomes SNGS-<id>")
+    p.add_argument("--steps", type=_split_ids, default=[1, 3], help="e.g. 1 or 1,2,3")
+    p.add_argument("--device", default="cuda", help="CUDA_VISIBLE_DEVICES value")
+    p.add_argument("--quality", type=int, default=95, help="JPEG quality for decoded frames")
+    p.add_argument("--no-video", action="store_true", help="skip writing the annotated video")
+    p.set_defaults(func=_cmd_analyze)
+
+    # export ----------------------------------------------------------------
+    p = sub.add_parser("export", help="export a tracker state .pklz to CSV/JSON")
+    p.add_argument("state", type=Path, help="path to a tracker state .pklz")
+    p.add_argument("--out", type=Path, required=True, help="output directory")
+    p.add_argument("--prefix", default=None, help="filename prefix (default: the state's parent dir)")
+    p.set_defaults(func=_cmd_export)
 
     # doctor ----------------------------------------------------------------
     p = sub.add_parser("doctor", help="pre-flight checks before running the pipeline")
