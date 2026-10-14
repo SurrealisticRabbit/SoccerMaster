@@ -86,29 +86,54 @@ jobs:
 
       - name: Build
         run: |
-          python -m pip install --upgrade pip build
+          python -m pip install --upgrade pip build packaging
           python -m build
 
-      - name: Check the version matches the tag
+      - name: Check the artefact carries the tag's version
         run: |
           python - <<'PY'
+          import os
           import pathlib
-          import setuptools_scm
 
-          version = setuptools_scm.get_version()
+          from packaging.utils import canonicalize_version
+          from packaging.version import Version
+
           wheels = sorted(pathlib.Path("dist").glob("*.whl"))
           sdists = sorted(pathlib.Path("dist").glob("*.tar.gz"))
-
-          print(f"scm version : {version}")
-          print(f"artefacts   : {[p.name for p in wheels + sdists]}")
-
           assert len(wheels) == 1, f"expected one wheel, got {len(wheels)}"
           assert len(sdists) == 1, f"expected one sdist, got {len(sdists)}"
-          # Wheel filenames normalise the local segment; the release version must
-          # appear in it, otherwise the tag and the artefact disagree.
-          assert version.split("+")[0] in wheels[0].name, (
-              f"wheel {wheels[0].name} does not carry version {version}"
+          print(f"artefacts : {[p.name for p in wheels + sdists]}")
+
+          # Dist filenames are {name}-{version}[-{py}-{abi}-{plat}], and a PEP 440
+          # version never contains a hyphen, so the second field is the whole version.
+          wheel_version = wheels[0].name.split("-")[1]
+          sdist_version = sdists[0].name.split("-")[1][: -len(".tar.gz")]
+          print(f"version   : {wheel_version}")
+          assert Version(wheel_version) == Version(sdist_version), (
+              f"wheel is {wheel_version} but sdist is {sdist_version}"
           )
+
+          # Derive the expected version from the tag rather than re-running
+          # setuptools-scm. Two reasons: setuptools-scm is not installed in this job
+          # (the build step installs only pip, build and packaging, and `import
+          # setuptools_scm` would have failed), and its bare get_version() ignores
+          # [tool.setuptools_scm] entirely -- it falls back to guess-next-dev, which
+          # disagrees with the configured no-guess-dev and so rejected a good artefact
+          # on the workflow_dispatch dry-run path. packaging normalises the tag the same
+          # way setuptools-scm does: v1.0.1-alpha -> 1.0.1a0.
+          ref = os.environ.get("GITHUB_REF_NAME", "")
+          if ref.startswith("v"):
+              expected = canonicalize_version(ref[1:])
+              print(f"tag       : {ref} -> {expected}")
+              assert Version(wheel_version).public == Version(expected).public, (
+                  f"tag {ref} implies version {expected}, but the artefact is "
+                  f"{wheel_version}"
+              )
+              print("artefact version matches the tag")
+          else:
+              # workflow_dispatch dry run: there is no tag to compare against, so the
+              # Version() call above is the check -- it fails on anything not PEP 440.
+              print(f"ref {ref!r} is not a tag; version {wheel_version} parses as PEP 440")
           PY
 
       - name: Contents of the wheel
