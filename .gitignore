@@ -1,60 +1,102 @@
-/codes/SoccerMaster/datasets
-
-# Unified package runtime dirs (see src/soccermaster/paths.py)
+# ---------------------------------------------------------------------------
+# Runtime data (see src/soccermaster/paths.py). SOCCERMASTER_HOME defaults to the
+# repo root in an editable install, so this is where the package writes.
+# ---------------------------------------------------------------------------
 /data/
 /weights/
 /outputs/
-# scratch root the example notebook uses outside Colab (SOCCERMASTER_HOME)
+
+# scratch root the example notebook uses outside Colab/Kaggle
 /soccermaster_home/
 
-# Kaggle Studio extension runtime artefacts
-.kaggle-outputs/
-notebook.ipynb
-
-# Modal app scratch: videos go up, exported data comes back
+# Modal app: videos go up, exported data comes back
 /videos/
 /modal-outputs/
+.modal/
 
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Python build artefacts
-*.egg-info/
+# build artefacts
 build/
 dist/
+*.egg
+*.egg-info/
+
+# virtualenvs
 .venv/
+venv/
+env/
 
-tmp
-pretrained_models
+# ---------------------------------------------------------------------------
+# Notebooks
+# ---------------------------------------------------------------------------
+.ipynb_checkpoints/
 
-*.txt
+# ---------------------------------------------------------------------------
+# Model weights and large binaries. The pipeline downloads these into weights/
+# (ignored above); these rules also catch a stray copy dropped anywhere else.
+# ---------------------------------------------------------------------------
 *.pth
-*.csv
-outputs
+*.pt
+*.ckpt
+*.safetensors
+*.onnx
+*.tar
+*.pklz
 
-# Deformable attention compiled files
+# Deformable attention compiled extension
 *.so
 *.o
 *.a
-build/
-*.egg
-models/ops/MultiScaleDeformableAttention.egg-info/PKG-INFO
-models/deformable_detr/ops/MultiScaleDeformableAttention.egg-info/PKG-INFO
-memory_demo.py
 
-.vscode
+# ---------------------------------------------------------------------------
+# Tool caches
+# ---------------------------------------------------------------------------
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 
-models/bak
+# ---------------------------------------------------------------------------
+# Stray artefacts at the repo root.
+# Deliberately root-anchored: an unanchored `*.txt` / `*.csv` silently hides
+# legitimate nested files (a requirements file, a test fixture).
+# ---------------------------------------------------------------------------
+/*.txt
+/*.csv
+/*.log
+/*.pkl
+/*.pklz
+
+# ---------------------------------------------------------------------------
+# Editors / OS
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
 .cursorignore
 pyrightconfig.json
-soccerbackbone.egg-info
 
-# macOS system files
+# macOS
 .DS_Store
 .DS_Store?
 ._*
 .Spotlight-V100
 .Trashes
+
+# Windows
 ehthumbs.db
 Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------------------
+# Leftover upstream paths, kept only so that restoring an old tree does not
+# re-add junk. Nothing here exists in the consolidated layout.
+# ---------------------------------------------------------------------------
+tmp
+pretrained_models
