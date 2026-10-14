@@ -146,6 +146,45 @@ def check_modules(module_names: set[str], report: Report) -> None:
             )
 
 
+def check_vlm_loading(steps: list[int], report: Report) -> None:
+    """Report what step 3 will actually load with, before a GPU run discovers it.
+
+    These are resolved at ``from_pretrained`` time rather than declared, so until this
+    existed a wrong value was invisible until step 3 had already spent GPU time. Both
+    have been wrong: a hardcoded ``flash_attention_2`` with no flash-attn installed
+    (step 3 could not start at all), and a ``dtype=`` argument the pinned transformers
+    ignores, which silently loaded a 7B model in float32.
+    """
+    if 3 not in steps:
+        return
+
+    report.header("Step 3 VLM loading")
+    try:
+        from soccermaster.soccernet_gamestate import vlm_compat
+    except Exception as exc:  # noqa: BLE001 - report rather than raise
+        report.fail(f"could not resolve VLM loading settings: {exc}")
+        return
+
+    implementation = vlm_compat.resolve_attn_implementation()
+    dtype_kwarg = vlm_compat.resolve_dtype_kwarg()
+
+    report.ok(f"attention backend: {implementation}")
+    report.ok(f"dtype argument   : {next(iter(dtype_kwarg))}={next(iter(dtype_kwarg.values()))}")
+
+    if implementation != "flash_attention_2":
+        report.warn(
+            "flash-attn is not usable here, so step 3 uses torch's sdpa attention",
+            "slower than flash-attn but correct; install flash-attn only on an Ampere+ GPU",
+        )
+
+    # A 7B model in float32 is ~28 GB rather than ~14 GB, which is the difference between
+    # fitting on a 24 GB card and not.
+    import torch
+
+    if next(iter(dtype_kwarg.values())) == torch.float32:
+        report.warn("step 3 would load the 7B VLM in float32, doubling its memory")
+
+
 def check_weights(steps: list[int], report: Report) -> None:
     from soccermaster.downloads import load_manifest
 
@@ -349,6 +388,7 @@ def run(steps: str | None = None, dataset: str | None = None) -> int:
         modules.update(STEP_REQUIREMENTS[step]["modules"])
     check_modules(modules, report)
 
+    check_vlm_loading(selected, report)
     check_weights(selected, report)
     check_configs(selected, report)
     check_dataset(dataset, selected, report)
