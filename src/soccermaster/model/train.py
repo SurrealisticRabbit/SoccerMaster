@@ -23,7 +23,7 @@ import glob
 from soccermaster.model.data.build import build_dataloader
 from soccermaster.model.utils.logger import Logger, MetricsTracker, TPS, Metrics
 from soccermaster.model.models.multi_task import MultiTaskingModel
-from runtime_option import runtime_option
+from soccermaster.model.options import runtime_option
 from soccermaster.model.utils.misc import is_distributed, set_seed
 from soccermaster.model.configs.util import load_super_config, update_config, yaml_to_dict
 from soccermaster.model.models.build import build_loss_fn, build_metrics_fn
