@@ -1,11 +1,18 @@
 # SoccerMaster: A Vision Foundation Model for Soccer Understanding
 
-Official implementation of **SoccerMaster: A Vision Foundation Model for Soccer Understanding** (CVPR 2026 Oral)
+> **A fork of SoccerMaster, refactored into a package, for easy use in notebooks.**
 
+This repository is a **fork**. It is not the official release. Upstream is the
+official implementation of **SoccerMaster: A Vision Foundation Model for Soccer
+Understanding** (CVPR 2026 Oral) by
 [*Haolin Yang*](https://haolinyang-hlyang.github.io/),
 [*Jiayuan Rao*](https://jyrao.github.io/),
-[*Haoning Wu*](https://haoningwu3639.github.io/),
-[*Weidi Xie*](https://weidixie.github.io/)
+[*Haoning Wu*](https://haoningwu3639.github.io/) and
+[*Weidi Xie*](https://weidixie.github.io/).
+
+The model, the data pipeline and the game-state reconstruction logic are the
+upstream authors' work. This fork only changes **how it is packaged and driven** —
+see **About this fork** below.
 
 <div style="line-height: 1;">
   <a href="https://haolinyang-hlyang.github.io/SoccerMaster/" target="_blank" style="margin: 2px;">
@@ -27,11 +34,59 @@ Official implementation of **SoccerMaster: A Vision Foundation Model for Soccer 
 
 ---
 
+## About this fork
+
+The upstream release ships as four separate projects glued together under `codes/`
+(`SoccerMaster`, `sn-gamestate`, `tracklab`, `sam2`), each with its own
+`poetry`/`setup.py`, its own import root, and a `cd`-and-`ln -s` quick start that
+does not survive a pip install. That is fine for reproducing a paper on one
+workstation; it is painful the moment you want to open a notebook and just use
+the model.
+
+This fork makes it one installable distribution you can `pip install` straight
+from GitHub — on Colab or Kaggle — and then drive from Python:
+
+```python
+!pip install "soccermaster[pipeline] @ git+https://github.com/SurrealisticRabbit/SoccerMaster.git@main"
+
+import soccermaster as sm
+
+sm.prepare("siglip")                        # fetch weights, no manual layout
+sm.prepare("soccermaster")
+
+model = sm.load_model()                     # -> MultiTaskingModel
+outputs = sm.predict(model, "frames/SNGS-10001", task="detection")
+
+sm.run_pipeline("data/SoccerNetGS", steps=(1, 3))   # game-state pipeline
+```
+
+What changed:
+
+| | Upstream | This fork |
+|---|---|---|
+| Packaging | four separate installable projects | one distribution, `pip install` from GitHub |
+| Import root | `tracklab`, `sn_gamestate`, `sam2` | `soccermaster.*`, single namespace |
+| Weight setup | manual `hf download` per model + `ln -s` | `soccermaster prepare` into a known `weights/` tree |
+| Entry point | `cd` into a directory and run a script | `soccermaster` CLI + `soccermaster.api` |
+| Notebook use | not supported | `load_model` / `predict` / `run_pipeline` |
+
+The model, data pipeline and game-state logic are untouched: **same module order,
+same head names, same pickle schema, same loss and schedule numbers.** Nothing has
+been retrained or swapped, and no vendored code was relicensed — vendored folders
+are named after their upstream, with original headers intact (see
+[`PROVENANCE.md`](PROVENANCE.md) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)).
+
+Scope notes: SAM 2 stays an optional extra and step 2 needs a CUDA build. The
+`reid` and `calibration` weights are SoccerNet-hosted and still have to be placed by
+hand. The rest of this README documents the refactored package; upstream commands
+survive below where they are still valid, with their paths updated.
+
+---
+
 ## Repository layout
 
-This fork consolidates the original multi-project tree into a **single installable
-package** under `src/`. Package folders are named after their upstream so you can
-tell at a glance what came from where:
+Package folders are named after their upstream so you can tell at a glance what
+came from where:
 
 ```
 pyproject.toml            # one distribution: "soccermaster"
