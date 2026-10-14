@@ -3,8 +3,8 @@ import argparse
 import numpy as np
 import json
 
-from evaluate_camera import get_polylines, scale_points, evaluate_camera_prediction
-from evaluate_extremities import mirror_labels
+from soccermaster.soccernet_gamestate.plugins.calibration.sn_calibration_baseline.evaluate_camera import get_polylines, scale_points, evaluate_camera_prediction
+from soccermaster.soccernet_gamestate.plugins.calibration.sn_calibration_baseline.evaluate_extremities import mirror_labels
 
 
 def evaluate(gt_zip, prediction_zip, width=960, height=540):

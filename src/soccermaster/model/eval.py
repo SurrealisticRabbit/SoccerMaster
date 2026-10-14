@@ -17,7 +17,7 @@ from soccermaster.model.models.multi_task import MultiTaskingModel
 from soccermaster.model.utils.misc import set_seed
 from soccermaster.model.configs.util import load_super_config, yaml_to_dict
 from soccermaster.model.models.build import build_loss_fn, build_metrics_fn
-from train import evaluate_one_epoch
+from soccermaster.model.train import evaluate_one_epoch
 
 def save_results_with_logger(eval_results: dict, logger: Logger):
     """
