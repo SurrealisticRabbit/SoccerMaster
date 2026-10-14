@@ -135,7 +135,16 @@ def _load_frames(frames) -> Sequence:
 
 
 def _frames_to_tensor(frames, cfg: dict, device: str):
-    """Stack frames into the ``[B, T, C, H, W]`` tensor the model expects."""
+    """Stack frames into the ``[B, T, C, H, W]`` tensor the model expects.
+
+    Frames are resized to a square ``AUG_MAX_SIZE`` (512 for the shipped configs).
+    The encoder's positional embedding is a fixed patch grid -- 512/16 = 32, so 1024
+    tokens -- and a non-square input yields a different grid and a shape error. This
+    matches the original ``inference_demo.py``, which fed square ``AUG_MAX_SIZE``
+    inputs. Note that squashing to a square distorts the aspect ratio, so predicted
+    boxes are in the resized frame; resize/pad yourself if you need the original
+    geometry.
+    """
     import numpy as np
     import torch
     import torchvision.transforms.v2 as v2
@@ -148,10 +157,7 @@ def _frames_to_tensor(frames, cfg: dict, device: str):
     tensors = []
     for frame in frames:
         t = to_tensor(np.ascontiguousarray(frame))  # uint8 HWC -> float CHW in [0,1]
-        _, h, w = t.shape
-        scale = max_size / max(h, w)
-        if scale != 1.0:
-            t = v2.functional.resize(t, [round(h * scale), round(w * scale)], antialias=True)
+        t = v2.functional.resize(t, [max_size, max_size], antialias=True)
         tensors.append(v2.functional.normalize(t, mean=mean, std=std))
 
     return torch.stack(tensors).unsqueeze(0).to(device)
