@@ -23,7 +23,7 @@ from typing import Iterable, Sequence
 from soccermaster import paths
 from soccermaster.downloads import prepare, prepare_all  # noqa: F401  (re-exported)
 
-CONFIG_DIR = Path(__file__).parent / "foundation" / "configs"
+CONFIG_DIR = Path(__file__).parent / "model" / "configs"
 
 #: Map the public task names onto the dataset keys used by the model config.
 TASK_TO_DATASET = {
