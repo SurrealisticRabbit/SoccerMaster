@@ -4,7 +4,16 @@ import requests
 import hashlib
 from tqdm import tqdm
 
-def download_file(url, local_filename, md5=None):
+def download_file(url, local_filename, md5=None, timeout=(15, 60)):
+    """Stream a file to disk, verifying an optional md5.
+
+    ``timeout`` is (connect, read) and matters more than it looks: ``requests`` has no
+    default, so ``iter_content`` on a stalled connection blocks *forever*. Because the
+    progress bar below writes to stderr, and a caller that captures stderr hides it, a
+    stalled download presents as a process doing nothing at all indefinitely -- no CPU,
+    no memory growth, no output -- which is indistinguishable from a hang. The read
+    timeout is per-chunk and generous, so a merely slow connection still completes.
+    """
     # NOTE the stream=True parameter below
     if Path(local_filename).exists():
         if md5 is not None:
@@ -16,7 +25,7 @@ def download_file(url, local_filename, md5=None):
 
     Path(local_filename).parent.mkdir(exist_ok=True, parents=True)
     file_hash = hashlib.md5()
-    with (requests.get(url, stream=True) as r):
+    with (requests.get(url, stream=True, timeout=timeout) as r):
         r.raise_for_status()
         total_size = int(r.headers.get("content-length", 0))
         chunk_size = 8192
