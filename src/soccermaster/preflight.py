@@ -185,6 +185,20 @@ def check_vlm_loading(steps: list[int], report: Report) -> None:
         report.warn("step 3 would load the 7B VLM in float32, doubling its memory")
 
 
+def _weigh(directory: Path) -> tuple[int, float]:
+    """(file count, total MB) under a directory.
+
+    Reported by check_weights because "is the directory non-empty" is too weak to be
+    useful: a download interrupted mid-way leaves a truncated checkpoint, the directory
+    is still non-empty, and doctor said ``[ ok ] reid present`` about a file whose md5
+    check then failed every run. A size makes that visible at a glance.
+    """
+    if not directory.is_dir():
+        return 0, 0.0
+    files = [p for p in directory.rglob("*") if p.is_file()]
+    return len(files), sum(p.stat().st_size for p in files) / 1e6
+
+
 def check_weights(steps: list[int], report: Report) -> None:
     from soccermaster.downloads import load_manifest
 
@@ -202,9 +216,9 @@ def check_weights(steps: list[int], report: Report) -> None:
         if entry is None:
             report.fail(f"'{name}' is not in the manifest")
             continue
-        present = entry.dest.is_dir() and any(entry.dest.iterdir())
-        if present:
-            report.ok(f"{name:<12} present at {entry.dest}")
+        count, megabytes = _weigh(entry.dest)
+        if count:
+            report.ok(f"{name:<12} {count} file(s), {megabytes:,.1f} MB at {entry.dest}")
         else:
             report.fail(
                 f"{name:<12} missing at {entry.dest}",
@@ -216,9 +230,9 @@ def check_weights(steps: list[int], report: Report) -> None:
         if entry is None:
             report.note(f"{name} (not in manifest)")
             continue
-        present = entry.dest.is_dir() and any(entry.dest.iterdir())
-        if present:
-            report.ok(f"{name:<12} present at {entry.dest}")
+        count, megabytes = _weigh(entry.dest)
+        if count:
+            report.ok(f"{name:<12} {count} file(s), {megabytes:,.1f} MB at {entry.dest}")
         else:
             report.note(
                 f"{name:<12} not downloaded yet; the pipeline fetches it from Zenodo "
