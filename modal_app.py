@@ -54,7 +54,11 @@ REPO = "https://github.com/SurrealisticRabbit/SoccerMaster.git"
 #:
 #: Note this governs only the *package* installed from git. modal_app.py itself is
 #: uploaded from local disk on every run, so edits here take effect immediately.
-REF = "1d57965205199e3ddea01890536f2e8ac52f03a1"
+#: Bump this when anything under ``src/`` changes, or the image keeps serving the old
+#: package: Modal caches layers by definition string and this is what makes it specific.
+#: Current value carries the api re-export fix (analyze_video/run_pipeline are no longer
+#: copies, so `fps` and `quality` actually reach the pipeline).
+REF = "87a6c31305353b4cb3aa9080d1ef2aa7ded9f5e3"
 
 #: Local directory the exported data is written back to by ``--cmd fetch``.
 LOCAL_OUTPUT_DIR = Path("modal-outputs")
@@ -209,7 +213,30 @@ def doctor(steps: str = "1,3") -> str:
         capture_output=True,
         text=True,
     )
-    return proc.stdout + ("\n--- stderr ---\n" + proc.stderr if proc.stderr else "")
+
+    # Report what the INSTALLED package actually provides. The image's package and this
+    # file version independently, and that mismatch cost a run: `sm.analyze_video`
+    # resolved through soccermaster.api to a copy that had lost `fps`, which looked
+    # exactly like a stale image and sent me bisecting the image cache instead. Printing
+    # the real signature and the identity check makes that a one-command answer.
+    import inspect
+
+    import soccermaster
+    from soccermaster import pipeline
+
+    lines = [
+        "",
+        "Installed package (what this image actually has)",
+        "-----------------------------------------------",
+        f"  version              : {soccermaster.__version__}",
+        f"  path                 : {soccermaster.__file__}",
+        f"  analyze_video params : {list(inspect.signature(pipeline.analyze_video).parameters)}",
+        "  sm.analyze_video is pipeline.analyze_video: "
+        f"{soccermaster.analyze_video is pipeline.analyze_video}",
+    ]
+
+    out = proc.stdout + "\n".join(lines)
+    return out + ("\n--- stderr ---\n" + proc.stderr if proc.stderr else "")
 
 
 def default_weight_names(steps: tuple[int, ...] = (1, 3)) -> list[str]:
