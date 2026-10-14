@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 
 log = logging.getLogger(__name__)
 
@@ -9,27 +10,19 @@ _applied = False
 
 
 def allow_ultralytics_globals() -> None:
-    """Let ultralytics 8.0.x checkpoints load under torch >= 2.6.
+    """Allowlist the ultralytics model classes for ``torch.load``.
 
-    torch 2.6 changed ``torch.load``'s ``weights_only`` default to True. ultralytics
-    8.0.100 -- the version this project pins -- calls ``torch.load`` without passing
-    that argument, so loading a YOLO checkpoint fails with
-
-        _pickle.UnpicklingError: Weights only load failed ...
-        Unsupported global: GLOBAL ultralytics.nn.tasks.DetectionModel
-
-    PyTorch's documented remedy is to allowlist the classes you trust. The
-    checkpoints come from this project's own Hugging Face repo, so allowlisting the
-    ultralytics model classes is appropriate and is far narrower than switching
-    ``weights_only`` off globally.
-
-    Safe to call repeatedly; a no-op on torch < 2.6, where the API is absent.
+    Kept as a belt-and-braces measure alongside :func:`trusted_checkpoint_load`; on
+    its own it is not sufficient because the checkpoints also reference torch
+    internals such as ``torch.nn.modules.container.Sequential``.
     """
     global _applied
     if _applied:
         return
 
-    add_safe_globals = getattr(__import__("torch").serialization, "add_safe_globals", None)
+    import torch
+
+    add_safe_globals = getattr(torch.serialization, "add_safe_globals", None)
     if add_safe_globals is None:
         _applied = True
         return
@@ -42,13 +35,46 @@ def allow_ultralytics_globals() -> None:
         except Exception:  # a given ultralytics build may not define them all
             continue
 
-    if not classes:
-        log.warning("ultralytics model classes not found; YOLO checkpoint loading may fail on torch>=2.6")
-        _applied = True
-        return
-
-    try:
-        add_safe_globals(classes)
-    except Exception as exc:  # never block startup over this
-        log.warning(f"could not allowlist ultralytics checkpoint globals: {exc}")
+    if classes:
+        try:
+            add_safe_globals(classes)
+        except Exception as exc:  # never block startup over this
+            log.warning(f"could not allowlist ultralytics checkpoint globals: {exc}")
     _applied = True
+
+
+@contextmanager
+def trusted_checkpoint_load():
+    """Load checkpoints with ``weights_only=False`` for the duration of the block.
+
+    torch 2.6 flipped ``torch.load``'s ``weights_only`` default to True. ultralytics
+    8.0.100 -- the version this project pins -- calls ``torch.load`` internally
+    without passing that argument, so a YOLO checkpoint fails to load on any modern
+    torch::
+
+        WeightsUnpickler error: Unsupported global: GLOBAL
+        ultralytics.nn.tasks.DetectionModel
+
+    Allowlisting the offending globals is whack-a-mole (fixing DetectionModel just
+    surfaces torch.nn.modules.container.Sequential next), and ultralytics gives no way
+    to pass the flag through. So scope the change narrowly instead: flip the default
+    only while constructing a model, and restore it immediately afterwards.
+
+    This is a real security trade-off and only acceptable because the checkpoint is
+    fetched from this project's own Hugging Face repo by `soccermaster prepare`, not
+    from an untrusted source. Do not reuse this for arbitrary user-supplied weights.
+    """
+    import torch
+
+    original = torch.load
+
+    def _load(*args, **kwargs):
+        kwargs.setdefault("weights_only", False)
+        return original(*args, **kwargs)
+
+    torch.load = _load
+    try:
+        yield
+    finally:
+        torch.load = original
+
