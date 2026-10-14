@@ -61,7 +61,11 @@ def test_every_pipeline_target_resolves(name: str) -> None:
     deps are present (the release workflow installs the pipeline extra) this runs, and
     it is the check that catches missing modules like posetrack21 or yolo_old.
     """
-    pytest.importorskip("yacs")
+    # Gate on a module that only the `pipeline` extra provides. Guarding on `yacs` and
+    # `transformers` was wrong: both are core dependencies, so they are always present,
+    # the guard never fired, and this ran in the core CI job where it failed on
+    # `SoccerNet`/`skimage` -- dependencies that job deliberately does not install.
+    pytest.importorskip("SoccerNet")
     pytest.importorskip("transformers")
 
     cfg = _compose(name)
