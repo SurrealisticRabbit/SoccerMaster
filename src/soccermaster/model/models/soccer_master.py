@@ -64,7 +64,11 @@ class VisionBackbone(nn.Module):
 
         # Load pretrained model once
         model = SiglipVisionModel.from_pretrained(ckpt_path, device_map="cpu")
-        siglip_vision_model = model.vision_model
+        # Later transformers releases (4.5x onwards, and 5.x) flattened
+        # SiglipVisionModel: it now *is* the vision tower and exposes .embeddings /
+        # .encoder.layers / .post_layernorm / .head directly, where older releases
+        # wrapped them in a `.vision_model` submodule. Support both layouts.
+        siglip_vision_model = getattr(model, "vision_model", model)
         config = SiglipVisionConfig.from_pretrained(ckpt_path)
         
         self.vision_model_embedding = siglip_vision_model.embeddings
