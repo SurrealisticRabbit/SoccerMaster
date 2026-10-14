@@ -144,6 +144,32 @@ def _worker_overrides(workers: int | None = None) -> list[str]:
     return [f"num_cores={workers if workers is not None else recommended_workers()}"]
 
 
+def _reid_scratch_overrides(run_dir: Path) -> list[str]:
+    """Keep prtreid's scratch directory out of the CWD and out of its own way.
+
+    prtreid builds ``os.makedirs(save_path/job_id)`` with no ``exist_ok``, where
+    ``save_path`` comes from the config as the relative ``reid`` and ``job_id``
+    defaults to ``0``. Two consequences:
+
+    - the directory is created relative to the working directory, which for us is the
+      step's run dir, so it lands wherever the run happens to be
+    - it fails with ``FileExistsError: 'reid/0'`` on the *second* run, because the
+      first one left the directory behind
+
+    Point it at an absolute per-run path and give each run its own ``job_id``, so the
+    directory never pre-exists. ``job_id`` is the config's own knob for exactly this
+    ("${oc.env:SLURM_JOBID,0}"); it is unused here because we do not run under Slurm.
+    """
+    import uuid
+
+    scratch = Path(run_dir).resolve() / "reid"
+    job_id = uuid.uuid4().hex[:8]
+    return [
+        f"modules.reid.save_path={scratch}",
+        f"modules.reid.job_id={job_id}",
+    ]
+
+
 def run_step1(
     dataset_path: Path,
     out_dir: Path,
@@ -173,6 +199,7 @@ def run_step1(
         "state.load_file=null",
         f"experiment_subname=step_1_{eval_set}",
         *_worker_overrides(workers),
+        *_reid_scratch_overrides(run_dir),
         *_visualization_overrides(save_videos),
         *_video_filter_overrides(video_ids, eval_set),
         *extra_overrides,
@@ -270,6 +297,7 @@ def run_step3(
         f"state.save_file={state_path}",
         f"experiment_subname=step_3_{eval_set}",
         *_worker_overrides(workers),
+        *_reid_scratch_overrides(run_dir),
         *_visualization_overrides(save_videos),
         *_video_filter_overrides(video_ids, eval_set),
         *extra_overrides,
