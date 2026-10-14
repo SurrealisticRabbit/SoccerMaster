@@ -202,6 +202,30 @@ def doctor(steps: str = "1,3") -> str:
     return proc.stdout + ("\n--- stderr ---\n" + proc.stderr if proc.stderr else "")
 
 
+def default_weight_names(steps: tuple[int, ...] = (1, 3)) -> list[str]:
+    """The manifest weights steps 1 and 3 need, read from doctor's own table.
+
+    Derived rather than hand-listed, because the hand-written list this replaced had
+    drifted from the truth in *both* directions: it omitted ``legibility``, which step 3
+    requires (doctor reports it as a hard failure before any run), and it included
+    ``siglip`` and ``soccermaster``, which the three-step pipeline never loads -- several
+    GB fetched for nothing. Reading STEP_REQUIREMENTS means prepare and doctor cannot
+    disagree again.
+
+    Deliberately lives here rather than in the package: modal_app.py is uploaded from
+    local disk on every run, so this takes effect immediately, whereas the same change
+    inside soccermaster would need a new commit, a bumped REF and another image rebuild.
+    """
+    from soccermaster.preflight import STEP_REQUIREMENTS
+
+    names: list[str] = []
+    for step in steps:
+        names += STEP_REQUIREMENTS[step]["manifest"]
+    # reid/calibration are `runtime` (the pipeline fetches them itself) and so are absent
+    # by construction. dict.fromkeys keeps insertion order while de-duplicating.
+    return list(dict.fromkeys(names))
+
+
 @app.function(image=image, volumes=VOLUMES, env=ENV, timeout=7200)
 def prepare(names: list[str] | None = None) -> str:
     """Download weights into the volume. Run once; they persist.
@@ -212,7 +236,7 @@ def prepare(names: list[str] | None = None) -> str:
     import subprocess
     import sys
 
-    names = names or ["siglip", "soccermaster", "yolo", "qwen7b"]
+    names = names or default_weight_names()
     out = [f"fetching: {', '.join(names)}"]
     for name in names:
         proc = subprocess.run(
