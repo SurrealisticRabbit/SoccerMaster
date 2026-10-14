@@ -80,10 +80,10 @@ REPO = "https://github.com/SurrealisticRabbit/SoccerMaster.git"
 #: uploaded from local disk on every run, so edits here take effect immediately.
 #: Bump this when anything under ``src/`` changes, or the image keeps serving the old
 #: package: Modal caches layers by definition string and this is what makes it specific.
-#: Current value carries the download resilience work: the weight downloads resume and
-#: retry, because Zenodo serves a Modal container at ~110 KB/s and the connection drops
-#: mid-transfer.
-REF = "3739b922459847c0611ad5598566f30d5df6fbac"
+#: Current value carries the pandas 3 fix for merge_dataframes, which is what killed the
+#: first run against real footage: string track ids were being written into a column that
+#: NaN seeding had made float64.
+REF = "2a3b7032d5b4be05e0ff63c9164b75d270e04dd5"
 
 #: Local directory the exported data is written back to by ``--cmd fetch``.
 LOCAL_OUTPUT_DIR = Path("modal-outputs")
