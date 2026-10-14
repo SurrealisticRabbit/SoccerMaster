@@ -36,6 +36,15 @@ dependencies = [
     "opencv-python>=4.8",
     "pillow>=10.0",
     "ultralytics==8.0.100",
+    # `ultralytics` 8.0.100 does a top-level `import pkg_resources`
+    # (yolo/utils/checks.py). `pkg_resources` ships inside setuptools; Python 3.12+ no
+    # longer installs setuptools into a fresh environment, and setuptools 81 removed
+    # `pkg_resources` outright (84.0.0 verified: ModuleNotFoundError). So this has to be
+    # declared *and* bounded. Without it `import ultralytics` dies on a clean 3.12/3.13
+    # interpreter, which is how the detector step failed in CI while working on Colab
+    # (Colab preinstalls setuptools). setuptools' own deprecation notice says: "Refrain
+    # from using this package or pin to Setuptools<81".
+    "setuptools>=68,<81",
     "albumentations==1.4.19",
     "lightning>=2.0",
     "filterpy>=1.4",
