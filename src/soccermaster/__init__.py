@@ -13,7 +13,19 @@ cheap and works without the optional/heavy dependencies installed::
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+# Version is supplied by setuptools-scm from the git tag. Importing the generated
+# module is the fastest path; the importlib fallback covers an installed build that
+# did not write the file; the last resort keeps `import soccermaster` working from a
+# bare source tree with no tags (which is exactly what the CI smoke test does).
+try:  # pragma: no cover - depends on how the package was built
+    from soccermaster._version import version as __version__
+except ImportError:  # pragma: no cover
+    try:
+        from importlib.metadata import version as _dist_version
+
+        __version__ = _dist_version("soccermaster")
+    except Exception:
+        __version__ = "0.0.0+unknown"
 
 __all__ = [
     "analyze_video",

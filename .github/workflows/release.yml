@@ -1,0 +1,184 @@
+name: Release
+
+# Push a tag and this runs the tests, builds the distribution and creates the release:
+#
+#   git tag v1.0.1-alpha
+#   git push origin v1.0.1-alpha
+#
+# setuptools-scm turns that tag into the package version (v1.0.1-alpha -> 1.0.1a0), so
+# there is no version number to edit by hand. The build job verifies the artefact
+# actually carries the version derived from the tag before anything is published.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and upload artefacts, but do not create a GitHub release"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  # Gate: the same suite CI runs. Nothing is published if this fails.
+  test:
+    name: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Tests
+        run: pytest -q
+
+  # Signal only. The pipeline extra compiles several git-installed packages, so a
+  # failure here is worth knowing about but should not block a release of the code.
+  test-pipeline:
+    name: tests with the pipeline extra
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[pipeline,dev]"
+
+      - name: Tests
+        run: pytest -q
+
+  build:
+    name: build sdist and wheel
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Required: setuptools-scm reads the tag to work out the version.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Check the version matches the tag
+        run: |
+          python - <<'PY'
+          import pathlib
+          import setuptools_scm
+
+          version = setuptools_scm.get_version()
+          wheels = sorted(pathlib.Path("dist").glob("*.whl"))
+          sdists = sorted(pathlib.Path("dist").glob("*.tar.gz"))
+
+          print(f"scm version : {version}")
+          print(f"artefacts   : {[p.name for p in wheels + sdists]}")
+
+          assert len(wheels) == 1, f"expected one wheel, got {len(wheels)}"
+          assert len(sdists) == 1, f"expected one sdist, got {len(sdists)}"
+          # Wheel filenames normalise the local segment; the release version must
+          # appear in it, otherwise the tag and the artefact disagree.
+          assert version.split("+")[0] in wheels[0].name, (
+              f"wheel {wheels[0].name} does not carry version {version}"
+          )
+          PY
+
+      - name: Contents of the wheel
+        run: |
+          python - <<'PY'
+          # Two things that have silently broken before: the Hydra configs have to
+          # ship, and so does the search-path plugin, or the pipeline cannot find its
+          # own configs after a pip install.
+          import pathlib
+          import zipfile
+
+          wheel = next(pathlib.Path("dist").glob("*.whl"))
+          names = zipfile.ZipFile(wheel).namelist()
+
+          required = [
+              "soccermaster/resources/weights_manifest.yaml",
+              "soccermaster/tracklab/configs/config.yaml",
+              "soccermaster/soccernet_gamestate/configs/gsr_step_1_example.yaml",
+              "hydra_plugins/__init__.py",
+          ]
+          missing = [r for r in required if r not in names]
+          assert not missing, f"missing from the wheel: {missing}"
+
+          print(f"wheel contains {len(names)} files; configs and hydra plugin present")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  release:
+    name: publish the release
+    needs: build
+    runs-on: ubuntu-latest
+    # workflow_dispatch exists so the build can be exercised without publishing.
+    if: github.event_name == 'push' || inputs.dry_run == false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: List what will be attached
+        run: ls -la dist/
+
+      - name: Create the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          # A tag with a hyphen is a pre-release by convention: v1.0.1-alpha, v2.0.0-rc1.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          name: ${{ github.ref_name }}
+          body: |
+            Built from tag `${{ github.ref_name }}`.
+
+            Install straight from this tag (no need to download anything by hand):
+
+            ```bash
+            pip install "soccermaster[pipeline] @ git+https://github.com/${{ github.repository }}@${{ github.ref_name }}"
+            ```
+
+            Or grab the wheel and sdist from the assets below.
+
+            > This is a fork. The model, data pipeline and game-state logic are the
+            > upstream authors' work; see `PROVENANCE.md` in the repository. The
+            > three game-state steps have not yet been verified end to end — see the
+            > "What is verified" section of the README.

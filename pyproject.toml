@@ -1,10 +1,14 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=68", "wheel", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "soccermaster"
-version = "0.1.0"
+# Version comes from the git tag via setuptools-scm -- no hand-edited number to
+# forget. Tag `v1.0.1-alpha` becomes version `1.0.1a0` (verified: setuptools-scm
+# normalises the `-alpha` suffix to PEP 440). Pushing a tag is what triggers the
+# release workflow.
+dynamic = ["version"]
 description = "SoccerMaster: a unified soccer vision foundation model and game-state reconstruction pipeline"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -89,6 +93,7 @@ train = [
 dev = [
     "ruff>=0.5",
     "pytest>=8.0",
+    "build>=1.2",
 ]
 
 [project.scripts]
@@ -109,3 +114,28 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 soccermaster = ["**/*.yaml", "**/*.yml", "**/*.json", "**/*.npy", "**/*.png"]
+
+[tool.setuptools_scm]
+# Version is derived from the git tag. Any commit after a tag gets a local version
+# segment (e.g. 1.0.1a0+g3489a1c), so builds are traceable to a commit.
+version_file = "src/soccermaster/_version.py"
+# Keeps `pip install` working from an exported tarball or a shallow clone with no
+# tags reachable, instead of failing outright.
+fallback_version = "0.0.0+unknown"
+# `guess-next-dev` (the default) reports commits after v1.0.1-alpha as 1.0.1a1.devN,
+# i.e. it claims the next alpha. `no-guess-dev` reports 1.0.1a0.post1.devN, which is
+# what those commits actually are. Verified: both give exactly 1.0.1a0 at the tag,
+# which is the property that matters -- the released artefact carries the tag's
+# version, not a guess.
+version_scheme = "no-guess-dev"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The suite is a smoke/regression suite, not exhaustive coverage: it checks that the
+# package imports, that the Hydra configs compose and every _target_ resolves, that
+# paths are retargeted, and that the exporter round-trips. Those are the failures this
+# project actually hit, and they are all runnable on CPU with no weights and no GPU.
+addopts = "-ra --strict-markers"
+markers = [
+    "heavy: needs the pipeline extra (torch/pandas/hydra). Skipped automatically when absent.",
+]
