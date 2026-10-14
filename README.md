@@ -76,6 +76,12 @@ been retrained or swapped, and no vendored code was relicensed — vendored fold
 are named after their upstream, with original headers intact (see
 [`PROVENANCE.md`](PROVENANCE.md) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)).
 
+Verified on a Colab T4 (Python 3.13, torch 2.11+cu130, transformers 4.51.3): install
+from GitHub, `load_model()` (967.8 M parameters, five heads, onto the GPU) and
+`predict(..., task="detection")` all run. The 3-step pipeline has **not** been run —
+it needs the `yolo`/`qwen7b` weights plus the SoccerNet-hosted `reid` and
+`calibration` sets, which are not automatic downloads.
+
 Scope notes: SAM 2 stays an optional extra and step 2 needs a CUDA build. The
 `reid` and `calibration` weights are SoccerNet-hosted and still have to be placed by
 hand. The rest of this README documents the refactored package; upstream commands
@@ -159,15 +165,23 @@ Install straight from GitHub (`@main`, or a tag once you cut one):
 !pip install "soccermaster[pipeline] @ git+https://github.com/SurrealisticRabbit/SoccerMaster.git@main"
 ```
 
-Two caveats on hosted notebooks:
+Notes for hosted notebooks:
 
-- **Do not let pip resolve `torch`.** Colab and Kaggle ship a CUDA-matched build, and
-  this project pins `torch>=2.4,<2.6`, so a normal install may *downgrade* the
-  working torch and break CUDA. Install the package with `--no-deps` alongside an
-  explicit dependency list, or accept the downgrade knowingly.
 - **`import soccermaster` needs no third-party packages at all.** The package
   re-exports its API lazily, so the import succeeds before any dependency is
   installed — useful to confirm the install landed.
+- **torch is not pinned above.** The project declares `torch>=2.4` with no ceiling, so
+  the runtime's own CUDA-matched torch is left alone. Setting an upper bound here made
+  the package uninstallable (see the note below).
+- **transformers is capped below 4.52.** 5.x flattened `SiglipVisionModel` and 4.57.6
+  has a bug in `from_pretrained`, so the cap is load-bearing. If you downgrade
+  transformers in place on Colab, uninstall first — otherwise files from the newer
+  release are left behind and break imports:
+  `pip uninstall -y transformers`.
+
+`examples/example.ipynb` runs this whole path on a Colab T4 and records the versions
+it was verified against.
+
 
 ### 2. Download pretrained weights
 
