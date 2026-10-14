@@ -7,6 +7,10 @@
 # scratch root the example notebook uses outside Colab (SOCCERMASTER_HOME)
 /soccermaster_home/
 
+# Kaggle Studio extension runtime artefacts
+.kaggle-outputs/
+notebook.ipynb
+
 __pycache__/
 *.py[cod]
 *$py.class
