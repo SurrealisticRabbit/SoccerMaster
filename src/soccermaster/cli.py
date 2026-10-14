@@ -84,6 +84,7 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
         device=args.device,
         quality=args.quality,
         write_video=not args.no_video,
+        fps=args.fps,
     )
     print(f"\noutput directory: {result['out_dir']}")
     if result["exports"]:
@@ -159,6 +160,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--steps", type=_split_ids, default=[1, 3], help="e.g. 1 or 1,2,3")
     p.add_argument("--device", default="cuda", help="CUDA_VISIBLE_DEVICES value")
     p.add_argument("--quality", type=int, default=95, help="JPEG quality for decoded frames")
+    p.add_argument("--fps", type=float, default=None,
+                   help="keep only this many frames per second (default: every frame). "
+                        "Every step is per-frame, so this is what makes a full match "
+                        "tractable, e.g. --fps 5")
     p.add_argument("--no-video", action="store_true", help="skip writing the annotated video")
     p.set_defaults(func=_cmd_analyze)
 

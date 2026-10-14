@@ -62,14 +62,52 @@ except ImportError:
         return iterable
 
 
-def extract_frames_from_video(video_path: str, output_dir: str, quality: int = 95):
+def probe_duration(video_path: str) -> float | None:
+    """Return the video's duration in seconds via ffprobe, or None if unavailable.
+
+    Used to size the ffmpeg timeout. A single fixed timeout cannot work here, because
+    decoding cost is proportional to video length: any constant is both too small for a
+    full match and pointlessly large for a short clip.
     """
-    Use ffmpeg to extract all frames from a video as jpg images.
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                video_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        return float(result.stdout.strip())
+    except Exception:  # noqa: BLE001 - ffprobe may be absent; fall back to the default
+        return None
+
+
+def extract_frames_from_video(
+    video_path: str,
+    output_dir: str,
+    quality: int = 95,
+    fps: float | None = None,
+    timeout: float | None = None,
+):
+    """
+    Use ffmpeg to extract frames from a video as jpg images.
 
     Args:
         video_path: path to mp4 video file
         output_dir: output directory (will create img1/ subdirectory)
         quality: jpg quality (1-100, default 95)
+        fps: keep only this many frames per second. ``None`` keeps every frame, which is
+            what the game-state steps were built against, but it makes cost scale
+            linearly with video length -- an 11-minute match at 25 fps is ~16,500 frames,
+            and step 3 asks a 7B VLM about every player in every one of them. Pass e.g.
+            ``fps=5`` to make a long match tractable.
+        timeout: seconds to allow ffmpeg. ``None`` derives it from the video's duration.
+            This was hardcoded to 300, which silently failed on any video needing more
+            than five minutes of decoding and left a half-populated img1/ behind.
 
     Returns:
         dict with num_frames, success status
@@ -84,20 +122,35 @@ def extract_frames_from_video(video_path: str, output_dir: str, quality: int = 9
     # Approximate: quality 95 -> qscale 2, quality 85 -> qscale 5, quality 75 -> qscale 8
     qscale = max(2, min(31, int(2 + (100 - quality) * 29 / 100)))
 
-    cmd = [
-        'ffmpeg', '-y',
-        '-i', video_path,
+    cmd = ['ffmpeg', '-y', '-i', video_path]
+
+    if fps is not None:
+        # -vf fps=N keeps/drops frames to hit N per second, applied before the encode.
+        cmd += ['-vf', f'fps={fps}']
+
+    cmd += [
         '-qscale:v', str(qscale),
         '-start_number', '1',
         os.path.join(img1_dir, '%06d.jpg')
     ]
 
+    if timeout is None:
+        # Generous on purpose: decode throughput varies wildly with resolution and
+        # codec, and being too tight leaves a half-populated img1/ that then
+        # masquerades as a pipeline bug. Ten times realtime, floored at ten minutes.
+        duration = probe_duration(video_path)
+        timeout = max(600.0, duration * 10) if duration else 3600.0
+
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         if result.returncode != 0:
             return {"success": False, "reason": f"ffmpeg error: {result.stderr[-200:]}", "num_frames": 0}
     except subprocess.TimeoutExpired:
-        return {"success": False, "reason": "ffmpeg timeout", "num_frames": 0}
+        return {
+            "success": False,
+            "reason": f"ffmpeg exceeded {timeout:.0f}s; raise timeout= or pass fps=",
+            "num_frames": 0,
+        }
     except FileNotFoundError:
         return {"success": False, "reason": "ffmpeg not found", "num_frames": 0}
 

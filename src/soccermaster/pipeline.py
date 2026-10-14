@@ -325,12 +325,17 @@ def extract_video_frames(
     eval_set: str = "sn500",
     video_id: int = 10001,
     quality: int = 95,
+    fps: float | None = None,
 ) -> Path:
     """Decode one video into the SoccerNet layout the pipeline expects.
 
     Creates ``<dataset_dir>/<eval_set>/SNGS-<video_id>/img1/*.jpg`` -- the sequence
     directory is named ``SNGS-<video_id>`` regardless of the input filename, because
     the dataset wrapper matches on that pattern.
+
+    ``fps`` decimates while decoding. Every downstream step is per-frame, so this is the
+    one control that scales the cost of a match: an 11-minute video at 25 fps is ~16,500
+    frames, and each frame is tracked and then queried against a 7B VLM per player.
 
     Requires ffmpeg on PATH.
     """
@@ -346,7 +351,7 @@ def extract_video_frames(
         print(f"frames already present, skipping decode: {img1}")
         return seq_dir
 
-    result = extract_frames_from_video(str(video), str(seq_dir), quality=quality)
+    result = extract_frames_from_video(str(video), str(seq_dir), quality=quality, fps=fps)
     if not result.get("success"):
         raise RuntimeError(f"ffmpeg failed for {video}: {result.get('reason')}")
     print(f"decoded {result['num_frames']} frames into {img1}")
@@ -363,6 +368,7 @@ def analyze_video(
     quality: int = 95,
     write_video: bool = True,
     extra_overrides: Sequence[str] | None = None,
+    fps: float | None = None,
 ) -> dict:
     """Video in, structured data out.
 
@@ -398,7 +404,7 @@ def analyze_video(
     print(f"sequence : {sequence}")
     print(f"steps    : {steps}\n")
 
-    extract_video_frames(video, dataset_dir, eval_set, video_id, quality)
+    extract_video_frames(video, dataset_dir, eval_set, video_id, quality, fps=fps)
 
     states: dict[int, Path] = {}
     step1_state = out_dir / STEP1_STATE
