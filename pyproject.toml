@@ -94,11 +94,15 @@ dev = [
 [project.scripts]
 soccermaster = "soccermaster.cli:main"
 
-[project.entry-points."hydra.plugins.search_path_plugin"]
-soccermaster = "soccermaster.tracklab.searchpath_plugin:SoccerMasterSearchPathPlugin"
-
 [project.entry-points.soccermaster_plugin]
 soccermaster = "soccermaster.soccernet_gamestate.config_finder:ConfigFinder"
+
+# NOTE: there is deliberately no "hydra.plugins.search_path_plugin" entry point.
+# Hydra does not read that group -- it imports a top-level package named
+# `hydra_plugins` and scans it (hydra.core.plugins.Plugins._initialize). An entry
+# point here looks correct but is silently ignored, which is how config discovery
+# was broken: the gsr_* configs were unreachable. The plugin lives in
+# src/hydra_plugins/soccermaster_searchpath_plugin/ instead.
 
 [tool.setuptools.packages.find]
 where = ["src"]

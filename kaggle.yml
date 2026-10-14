@@ -1,0 +1,10 @@
+project: kagglekernel
+kernel_slug: tomrubberduck/kagglekernel
+code_file: examples/example.ipynb
+accelerator: gpu
+internet: true
+privacy: private
+datasets: []
+competitions: []
+outputs:
+  download_to: .kaggle-outputs/

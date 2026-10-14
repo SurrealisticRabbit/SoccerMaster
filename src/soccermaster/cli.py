@@ -72,6 +72,12 @@ def _cmd_foundation_demo(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    from soccermaster import preflight
+
+    return preflight.run(steps=args.steps, dataset=args.dataset)
+
+
 def _passthrough(module: str, argv: list[str]) -> int:
     return subprocess.run([sys.executable, "-m", module, *argv]).returncode
 
@@ -114,6 +120,12 @@ def build_parser() -> argparse.ArgumentParser:
     # foundation-demo -------------------------------------------------------
     p = sub.add_parser("foundation-demo", help="smoke-test the model with random inputs")
     p.set_defaults(func=_cmd_foundation_demo)
+
+    # doctor ----------------------------------------------------------------
+    p = sub.add_parser("doctor", help="pre-flight checks before running the pipeline")
+    p.add_argument("--steps", default=None, help="steps to check, e.g. '1,3' (default: all)")
+    p.add_argument("--dataset", default=None, help="dataset root to inspect")
+    p.set_defaults(func=_cmd_doctor)
 
     # train / eval ----------------------------------------------------------
     # Arguments are forwarded verbatim to the original scripts, so these are
