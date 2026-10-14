@@ -261,23 +261,44 @@ class TrackerState(AbstractContextManager):
             self.save()
 
     def update(self, detections: pd.DataFrame, image_metadata):
-        if self.detections_pred is None:
+        # Nothing accumulated yet. Note that `load()` hands the pipeline a bare
+        # `pd.DataFrame()`, which has no columns at all -- so an accumulator can hold
+        # a frame that is "empty" in the sense that matters here (no columns) even
+        # though it is not None. Filtering on a column that does not exist raises a
+        # bare ``KeyError: 'video_id'``, so take the fresh frame's schema instead.
+        if self.detections_pred is None or self.detections_pred.columns.empty:
+            if self.detections_pred is not None:
+                log.debug(
+                    "TrackerState.update: replacing an empty accumulated frame "
+                    "(0 columns) with the incoming one (%d columns)",
+                    len(detections.columns),
+                )
             self.detections_pred = detections
             self.image_pred = image_metadata
-        else:
+            return
+
+        # Drop this video's previous rows before appending the new ones. Guarded
+        # because a module can legitimately return a frame without video_id (the
+        # tracker passes through whatever the detector produced), and a missing column
+        # should not abort a run that has already done the expensive work.
+        if "video_id" in self.detections_pred.columns:
             self.detections_pred = self.detections_pred[
                 ~(self.detections_pred["video_id"] == self.video_id)
             ]
-            self.detections_pred = pd.concat(
-                [self.detections_pred, detections]
-            )  # TODO UPDATE should update existing rows or append if new rows
-            # updating image metadata
+        else:
+            log.warning(
+                "TrackerState.update: accumulated detections have no 'video_id' column "
+                "(columns: %s); appending without de-duplicating this video",
+                list(self.detections_pred.columns),
+            )
+        self.detections_pred = pd.concat([self.detections_pred, detections])
+
+        # updating image metadata
+        if self.image_pred is not None and "video_id" in self.image_pred.columns:
             self.image_pred = self.image_pred[
                 ~(self.image_pred["video_id"] == self.video_id)
             ]
-            self.image_pred = pd.concat(
-                [self.image_pred, image_metadata]
-            )
+        self.image_pred = pd.concat([self.image_pred, image_metadata])
 
     def save(self):
         """
