@@ -104,7 +104,7 @@ REPO = "https://github.com/SurrealisticRabbit/SoccerMaster.git"
 #: Current value carries the step-2 work: the Hydra initialisation and config-name
 #: resolution that made it possible for step 2 to start at all, the reachable
 #: --max_processes_per_gpu, the manifest's sam2 yaml, and the device-plumbing fixes.
-REF = "64a33daf620d8e8ffa05d2eb656a0796465d927c"
+REF = "1c95b4087086166fa60ba2bc6d0c829d1476bdee"
 
 #: Local directory the exported data is written back to by ``--cmd fetch``.
 LOCAL_OUTPUT_DIR = Path("modal-outputs")
