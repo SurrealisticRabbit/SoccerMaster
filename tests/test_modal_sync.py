@@ -200,6 +200,60 @@ def test_path_scopes_the_sync(app, tmp_path: Path) -> None:
     assert not (tmp_path / "modal/step1").exists()
 
 
+def test_path_does_not_match_a_longer_sibling_directory(app, tmp_path: Path) -> None:
+    """`modal/data` must not select `modal/dataset/...`.
+
+    A bare ``startswith`` does exactly that, so this scoped run downloaded four thousand
+    image frames and none of the exports it was asked for -- the opposite of the request,
+    and it reported success.
+    """
+    volume = _volume(
+        app,
+        {
+            "modal/data/a.csv": b"a" * 10,
+            "modal/dataset/sn500/SNGS-10006/img1/000001.jpg": b"j" * 500,
+            "modal/dataset/sn500/SNGS-10006/img1/000002.jpg": b"j" * 500,
+        },
+    )
+
+    report = app.sync_outputs(sub_path="modal/data")
+
+    assert report["fetched"] == ["modal/data/a.csv"], "a sibling directory was matched"
+    assert volume.reads == ["modal/data/a.csv"]
+
+
+def test_path_matches_a_nested_directory(app, tmp_path: Path) -> None:
+    """Scoping deeper selects that subtree, not just an exact path."""
+    volume = _volume(
+        app,
+        {
+            "modal/data/one/a.csv": b"a" * 10,
+            "modal/data/one/two/b.csv": b"b" * 10,
+            "modal/data/other/c.csv": b"c" * 10,
+        },
+    )
+
+    report = app.sync_outputs(sub_path="modal/data/one")
+
+    assert sorted(report["fetched"]) == ["modal/data/one/a.csv", "modal/data/one/two/b.csv"]
+
+
+def test_path_accepts_an_exact_file(app, tmp_path: Path) -> None:
+    volume = _volume(app, {"modal/data/a.csv": b"a" * 10, "modal/data/b.csv": b"b" * 10})
+
+    report = app.sync_outputs(sub_path="modal/data/a.csv")
+
+    assert report["fetched"] == ["modal/data/a.csv"]
+
+
+def test_path_ignores_surrounding_slashes(app, tmp_path: Path) -> None:
+    volume = _volume(app, {"modal/data/a.csv": b"a" * 10})
+
+    report = app.sync_outputs(sub_path="/modal/data/")
+
+    assert report["fetched"] == ["modal/data/a.csv"]
+
+
 def test_force_refetches_everything(app, tmp_path: Path) -> None:
     _volume(app, {"modal/data/a.csv": b"a" * 10})
     app.sync_outputs()

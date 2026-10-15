@@ -693,7 +693,12 @@ def sync_outputs(sub_path: str = "", force: bool = False) -> dict:
         if _entry_kind(entry) == "DIRECTORY":
             continue
         relative = str(entry.path).lstrip("/")
-        if prefix and not relative.startswith(prefix):
+        # A boundary-aware prefix match, not a bare startswith. `--path modal/data` must
+        # not also select `modal/dataset/...`, which is what plain startswith did: it
+        # matched 4010 files where 10 were intended, so the scoped sync downloaded four
+        # thousand image frames and none of the exports it was asked for -- the opposite
+        # of the request, and quiet about it.
+        if prefix and relative != prefix and not relative.startswith(prefix + "/"):
             continue
         wanted.append((relative, entry))
 
