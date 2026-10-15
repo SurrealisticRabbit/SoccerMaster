@@ -609,6 +609,14 @@ def analyze(
             extra_overrides=extra,
         )
     except Exception:
+        # Commit before returning, even on failure. `analyze_video` runs its steps in
+        # sequence, so a failure late -- in step 3, say -- happens *after* step 1 has
+        # written a complete tracker state and its exports. Without this the container
+        # exits with uncommitted writes and an hour of tracking is thrown away because a
+        # later stage failed. Modal does commit in the background every few seconds, but
+        # relying on that for the only copy of a long run's output is not a plan.
+        outputs_volume.commit()
+        print("committed partial outputs before failing", flush=True)
         return {"error": traceback.format_exc()}
 
     # Read the exported data back so the caller gets it without a volume round-trip.
