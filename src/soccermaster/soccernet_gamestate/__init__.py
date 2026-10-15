@@ -10,7 +10,12 @@ from soccermaster.tracklab.utils.matplotlib_compat import patch_legacy_cmap
 # own. A package __init__ always runs before its submodules, so this cannot be bypassed.
 patch_legacy_cmap()
 
+# The distribution is `soccermaster`; this module used to look up `sn-gamestate`, the
+# pre-refactor project name, which no longer exists -- so the lookup always raised and
+# `__version__` was permanently None while looking like working code. Derived from the
+# installed distribution rather than imported from the parent package to avoid a circular
+# import at package-init time.
 try:
-    __version__ = metadata.version('sn-gamestate')
+    __version__ = metadata.version('soccermaster')
 except metadata.PackageNotFoundError:
     __version__ = None

@@ -199,3 +199,45 @@ def test_step_duration_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     _run(_child("import time; time.sleep(0.4); print('done')"), Path("."))
 
     assert "step finished in" in recorder.text
+
+
+# --------------------------------------------------------------------------- #
+# device plumbing
+# --------------------------------------------------------------------------- #
+#
+# `device` means two different things in the pipeline -- which torch device the child
+# should use, and which GPU indices to expose -- and passing it straight through conflated
+# them. The default value is "cuda", which is not a device-index list, so all three steps
+# were setting CUDA_VISIBLE_DEVICES=cuda for their children. That only ever worked because
+# the Modal app happens to pass "0"; any caller using the default was contradicting itself.
+
+
+@pytest.mark.parametrize("device", ["cuda", "cpu", None, ""])
+def test_cuda_and_cpu_do_not_become_a_visible_devices_value(device: str | None) -> None:
+    assert pipeline._device_env(device) is None, (
+        f"device={device!r} should leave CUDA_VISIBLE_DEVICES unset, not set it to a "
+        f"torch device name that is not an index list"
+    )
+
+
+@pytest.mark.parametrize("device", ["0", "0,1", "1", "0,1,2,3"])
+def test_index_lists_are_passed_through(device: str) -> None:
+    assert pipeline._device_env(device) == {"CUDA_VISIBLE_DEVICES": device}
+
+
+@pytest.mark.parametrize("device", ["cuda", "cpu", None, ""])
+def test_gpu_list_falls_back_to_zero_for_non_index_devices(device: str | None) -> None:
+    """Step 2 does `int(x)` per element, so 'cuda' was a hard crash on its default path."""
+    assert pipeline._gpu_index_list(device) == "0"
+
+
+@pytest.mark.parametrize("device", ["0", "0,1", "0,1,2,3"])
+def test_gpu_list_passes_indices_through(device: str) -> None:
+    assert pipeline._gpu_index_list(device) == device
+
+
+def test_gpu_list_is_always_parseable_as_ints() -> None:
+    """The property that matters: sam2_refine's int() must never see a device name."""
+    for device in ("cuda", "cpu", None, "0", "0,1"):
+        value = pipeline._gpu_index_list(device)
+        assert [int(part) for part in value.split(",")], f"unparseable for {device!r}"

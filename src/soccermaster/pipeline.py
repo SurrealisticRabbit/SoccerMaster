@@ -230,6 +230,36 @@ def _worker_overrides(workers: int | None = None) -> list[str]:
     return [f"num_cores={workers if workers is not None else recommended_workers()}"]
 
 
+def _device_env(device: str | None) -> dict | None:
+    """``CUDA_VISIBLE_DEVICES`` for a child process, or None to leave it alone.
+
+    ``device`` serves two different jobs in this module and they are not the same thing:
+    which torch device the child should use, and which GPU indices to expose to it. Passed
+    straight through, the default ``"cuda"`` sets ``CUDA_VISIBLE_DEVICES=cuda``, which is
+    not a device-index list at all -- that only ever worked because the Modal app passes
+    ``"0"`` explicitly. Any notebook or CLI caller relying on the default was running with
+    a self-contradictory environment.
+
+    Leaving the variable unset when the caller said ``"cuda"`` is the honest reading: it
+    means "whatever CUDA gives you", not "a device called cuda".
+    """
+    if not device or device in {"cuda", "cpu"}:
+        return None
+    return {"CUDA_VISIBLE_DEVICES": str(device)}
+
+
+def _gpu_index_list(device: str | None) -> str:
+    """A comma-separated index list for tools that parse their own GPU argument.
+
+    ``sam2_refine`` does ``int(gpu_id)`` on each element, so handing it ``"cuda"`` raised
+    ``ValueError: invalid literal for int() with base 10: 'cuda'`` -- a hard crash on step
+    2's default path, before any work started.
+    """
+    if not device or device in {"cuda", "cpu"}:
+        return "0"
+    return str(device)
+
+
 def _reid_scratch_overrides(run_dir: Path) -> list[str]:
     """Keep prtreid's scratch directory out of the CWD and out of its own way.
 
@@ -299,7 +329,7 @@ def run_step1(
     _run(
         _tracking_command(STEP1_CONFIG, run_dir, overrides),
         cwd=run_dir,
-        extra_env={"CUDA_VISIBLE_DEVICES": device},
+        extra_env=_device_env(device),
     )
     return state_path
 
@@ -343,7 +373,7 @@ def run_step2(
         "--sam_config",
         config,
         "--gpu_list",
-        device,
+        _gpu_index_list(device),
         "--save_refined_pklz",
         "--save_pklz_path",
         str(refined),
@@ -352,7 +382,7 @@ def run_step2(
     if video_ids:
         command += ["--video_id_list", ",".join(str(v) for v in video_ids)]
 
-    _run(command, cwd=out_dir, extra_env={"CUDA_VISIBLE_DEVICES": device})
+    _run(command, cwd=out_dir, extra_env=_device_env(device))
     return refined
 
 
@@ -395,7 +425,7 @@ def run_step3(
     _run(
         _tracking_command(STEP3_CONFIG, run_dir, overrides),
         cwd=run_dir,
-        extra_env={"CUDA_VISIBLE_DEVICES": device},
+        extra_env=_device_env(device),
     )
     return state_path
 
@@ -539,6 +569,34 @@ def analyze_video(
         )
         for kind, path in exports.items():
             print(f"  {kind:<18} {path}")
+
+        # A state that yields no detections is almost never a real result, and by default
+        # it is completely silent: every step reports success, the export writes empty
+        # files, and `summary.json` quietly says `n_detections: 0`.
+        #
+        # This is worth failing on because the usual cause is a state/sequence mismatch
+        # rather than genuinely seeing nothing. `run_step1` saves to a FIXED path
+        # (<out>/step1/sn-gamestate.pklz), so the state on disk belongs to whichever
+        # sequence step 1 last ran for. Running step 3 against a different --video-id
+        # matches no rows, and the whole pipeline completes having done nothing -- which is
+        # exactly what happened here, and it cost a night of debugging that looked like an
+        # OOM, an I/O fault and a visualization bug before it looked like this.
+        summary_path = exports.get("summary_json")
+        if summary_path and Path(summary_path).is_file():
+            import json as _json
+
+            summary = _json.loads(Path(summary_path).read_text())
+            if not summary.get("n_detections"):
+                raise RuntimeError(
+                    f"step {richest} produced no detections for {sequence}.\n"
+                    f"  state              : {states[richest]}\n"
+                    f"  n_detections       : {summary.get('n_detections')}\n"
+                    f"  n_tracks           : {summary.get('n_tracks')}\n"
+                    f"  detection_columns  : {summary.get('detection_columns')}\n"
+                    "Most likely a state/sequence mismatch: step 1 writes to a fixed path, "
+                    "so a run whose --video-id step 1 did not produce matches no rows. Run "
+                    "steps 1 and 3 with the same --video-id, or delete the stale state."
+                )
     else:
         print("\nno tracker state was produced, so there is nothing to export.")
 
