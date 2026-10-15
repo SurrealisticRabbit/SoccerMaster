@@ -101,7 +101,11 @@ sam2 = [
     # than failing, so this degrades gracefully, but skipping the attempt saves a pointless
     # compile. The extension accelerates mask connected-components; the video predictor
     # works without it.
-    "sam2 @ git+https://github.com/SurrealisticRabbit/SoccerMaster@main#subdirectory=third_party/sam2",
+    # Pinned to a commit rather than a branch so an install is reproducible: the vendored
+    # tree is Meta's unmodified SAM 2 and will not need updating, so a moving ref buys
+    # nothing and costs the ability to say what was installed. This SHA is a pushed commit
+    # of this repository that contains third_party/sam2.
+    "sam2 @ git+https://github.com/SurrealisticRabbit/SoccerMaster@5bb81c5b066666e3ff80f8d6463d3798c2679c75#subdirectory=third_party/sam2",
 ]
 # TVCalib calibration backend (not used by the default nbjw_calib configs).
 tvcalib = [
