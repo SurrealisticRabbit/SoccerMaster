@@ -89,6 +89,19 @@ pipeline = [
 ]
 sam2 = [
     "iopath>=0.1.10",
+    # SAM 2 itself is vendored at third_party/sam2 and is NOT part of this distribution's
+    # wheel -- packages are discovered under src/ only, so the vendored tree ships in the
+    # sdist but is never installed. It therefore has to be requested from the repository
+    # subdirectory, otherwise `import sam2` fails in soccermaster/sam2_refine and step 2
+    # cannot start. Previously this extra declared only iopath, so installing it looked
+    # like it had enabled step 2 while nothing provided the package.
+    #
+    # SAM2_BUILD_CUDA=0 is recommended: the CUDA extension needs nvcc, which most hosts
+    # (including the Modal image) lack. setup.py catches a failed build and warns rather
+    # than failing, so this degrades gracefully, but skipping the attempt saves a pointless
+    # compile. The extension accelerates mask connected-components; the video predictor
+    # works without it.
+    "sam2 @ git+https://github.com/SurrealisticRabbit/SoccerMaster@main#subdirectory=third_party/sam2",
 ]
 # TVCalib calibration backend (not used by the default nbjw_calib configs).
 tvcalib = [

@@ -53,7 +53,11 @@ qwen72b:
 sam2:
   source: hf
   repo: facebook/sam2.1-hiera-large
-  allow: ["*.pt"]
+  # The yaml as well as the checkpoint: the repo publishes `sam2.1_hiera_l.yaml` beside the
+  # weights, and sam2_refine falls back to it when the installed SAM 2 package's own config
+  # layout does not match what this code expects. Fetching `*.pt` alone left that fallback
+  # with nothing to find.
+  allow: ["*.pt", "*.yaml"]
   dest: sam2
   hint: SAM 2 video predictor checkpoint (step-2 segmentation refinement).
 
