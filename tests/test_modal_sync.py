@@ -57,10 +57,32 @@ def _load_modal_app(monkeypatch: pytest.MonkeyPatch):
     return module
 
 
+class _Kind:
+    """Stands in for ``modal.types.FileEntryType``.
+
+    Mirrors the real thing's *shape* -- an enum whose members have ``.name`` -- which
+    matters more than it looks. The first version of this fake used the plain string
+    ``"file"``, matching the production code's wrong assumption that ``entry.type`` was a
+    string. The tests therefore passed while the real sync selected zero files and
+    silently copied nothing, because ``FileEntryType.FILE != "file"``. A fake that encodes
+    the same mistake as the code cannot catch it.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<FileEntryType.{self.name}>"
+
+
+FILE = _Kind("FILE")
+DIRECTORY = _Kind("DIRECTORY")
+
+
 class _Entry:
     """Mirrors modal.types.FileEntry: path, type, mtime, size."""
 
-    def __init__(self, path: str, size: int, kind: str = "file") -> None:
+    def __init__(self, path: str, size: int, kind: _Kind = FILE) -> None:
         self.path = path
         self.type = kind
         self.mtime = 0
@@ -216,7 +238,7 @@ def test_directory_entries_are_ignored(app, tmp_path: Path) -> None:
     """listdir(recursive=True) returns directories too; they must not be opened."""
     volume = _FakeVolume({"modal/data/a.csv": b"a" * 10})
     volume.listdir = lambda path, recursive=False: [
-        _Entry("/modal/data", 0, kind="directory"),
+        _Entry("/modal/data", 0, kind=DIRECTORY),
         _Entry("/modal/data/a.csv", 10),
     ]
     app.__dict__["outputs_volume"] = volume
@@ -225,6 +247,58 @@ def test_directory_entries_are_ignored(app, tmp_path: Path) -> None:
 
     assert report["fetched"] == ["modal/data/a.csv"]
     assert volume.reads == ["modal/data/a.csv"]
+
+
+def test_an_enum_valued_type_is_treated_as_a_file(app, tmp_path: Path) -> None:
+    """The regression, and the reason the fake had to stop using the string 'file'.
+
+    ``entry.type`` is a ``FileEntryType`` enum, so ``type != "file"`` is always true and
+    every file is skipped -- the sync reported "remote: 0 file(s)" and copied nothing
+    while looking like it had worked.
+    """
+    volume = _volume(app, {"modal/data/a.csv": b"a" * 10})
+    # Prove the fake really is enum-shaped, so this test cannot pass for the wrong reason.
+    assert _entry_kind_of(volume) != "file"
+    assert _entry_kind_of(volume) == "FILE"
+
+    report = app.sync_outputs()
+
+    assert report["fetched"] == ["modal/data/a.csv"], (
+        "an enum-valued type must be recognised as a file"
+    )
+
+
+def _entry_kind_of(volume: _FakeVolume) -> str:
+    """What the production helper sees for this volume's first entry."""
+    entry = volume.listdir("/", recursive=True)[0]
+    return str(getattr(entry.type, "name", entry.type) or "").upper()
+
+
+def test_a_string_valued_type_still_works(app, tmp_path: Path) -> None:
+    """Tolerate the field being a plain string, in case the API changes shape."""
+    entry = _Entry("/modal/data/a.csv", 10)
+    entry.type = "file"  # a bare string, as an older or different API might give
+    volume = _FakeVolume({"modal/data/a.csv": b"a" * 10})
+    volume.listdir = lambda path, recursive=False: [entry]
+    app.__dict__["outputs_volume"] = volume
+
+    report = app.sync_outputs()
+
+    assert report["fetched"] == ["modal/data/a.csv"]
+
+
+def test_an_empty_selection_is_reported_and_fetches_nothing(
+    app, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An empty volume must not look like a successful sync of nothing."""
+    _volume(app, {"modal/data/a.csv": b"a" * 10})
+
+    report = app.sync_outputs(sub_path="modal/nonexistent")
+
+    assert report["fetched"] == []
+    assert report["transferred_mb"] == 0.0
+    out = capsys.readouterr().out
+    assert "nothing to fetch" in out
 
 
 def test_transferred_bytes_are_reported(app, tmp_path: Path) -> None:

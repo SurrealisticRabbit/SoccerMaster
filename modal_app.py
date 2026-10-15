@@ -636,6 +636,19 @@ def analyze(
     return json_safe(payload)
 
 
+def _entry_kind(entry) -> str:
+    """FileEntry.type as an upper-case name, whatever shape it arrives in.
+
+    ``modal.types.FileEntryType`` is an **enum** (UNSPECIFIED, FILE, DIRECTORY, SYMLINK,
+    FIFO, SOCKET), not a string. Comparing it to ``"file"`` is therefore never equal, and
+    an earlier version of the sync did exactly that -- so it selected zero files, printed
+    a plausible "remote: 0 file(s)", and silently copied nothing. Reading ``.name`` with a
+    ``str()`` fallback works whether the field is the enum or a plain string.
+    """
+    kind = getattr(entry, "type", None)
+    return str(getattr(kind, "name", kind) or "").upper()
+
+
 def sync_outputs(sub_path: str = "", force: bool = False) -> dict:
     """Download only the files that are missing or a different size.
 
@@ -673,15 +686,34 @@ def sync_outputs(sub_path: str = "", force: bool = False) -> dict:
     entries = outputs_volume.listdir("/", recursive=True)
     wanted = []
     for entry in entries:
-        if getattr(entry, "type", "file") != "file":
+        # Only DIRECTORY is skipped. Everything else is attempted, because the failure
+        # modes are asymmetric: attempting to read something that turns out not to be a
+        # file raises and is reported per-file below, whereas wrongly skipping files is
+        # silent -- which is precisely how this function once fetched nothing at all.
+        if _entry_kind(entry) == "DIRECTORY":
             continue
         relative = str(entry.path).lstrip("/")
         if prefix and not relative.startswith(prefix):
             continue
         wanted.append((relative, entry))
 
-    print(f"remote: {len(wanted)} file(s) under '/{prefix}'" if prefix else
-          f"remote: {len(wanted)} file(s)", flush=True)
+    scope = f" under '/{prefix}'" if prefix else ""
+    print(f"remote: {len(wanted)} file(s){scope} of {len(entries)} entries", flush=True)
+    if not wanted:
+        # Loud rather than silent: an empty selection is far more likely to be a bug or a
+        # wrong --path than a genuinely empty volume, and it must not look like success.
+        print(
+            "  nothing to fetch. Check --path, or list the volume with "
+            "`modal run modal_app.py --cmd list`.",
+            flush=True,
+        )
+        return {
+            "fetched": [],
+            "skipped": [],
+            "failed": [],
+            "transferred_mb": 0.0,
+            "local_root": str(local_root),
+        }
 
     for relative, entry in wanted:
         target = local_root / relative
