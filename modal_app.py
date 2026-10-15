@@ -139,10 +139,19 @@ image = (
     # want. Install it first so the soccermaster install does not get a chance to
     # choose a different build.
     .pip_install("torch>=2.4", "torchvision>=0.19")
-    # The `pipeline` extra carries everything the game-state steps import. Omit the
-    # `sam2` extra: step 2 needs the vendored third_party/sam2 tree as well, which is
-    # not in the wheel.
+    # The `pipeline` extra carries everything the game-state steps import.
     .pip_install(f"soccermaster[pipeline] @ git+{REPO}@{REF}")
+    # SAM 2 lives in the repo at third_party/sam2 and is deliberately NOT part of the
+    # wheel, so step 2 needs it from the subdirectory. Without this, `import sam2` fails
+    # inside sam2_refine and step 2 cannot start at all.
+    # SAM2_BUILD_CUDA=0 because debian_slim has no nvcc: setup.py would catch the failed
+    # extension build and warn, so it is safe either way, but skipping it avoids a compile
+    # attempt that can only fail. The extension accelerates mask connected-components; the
+    # video predictor works without it.
+    .pip_install(
+        f"sam2 @ git+{REPO}@{REF}#subdirectory=third_party/sam2",
+        env={"SAM2_BUILD_CUDA": "0"},
+    )
 )
 
 #: Weights persist here. ~5.5 GB of downloads, so this matters.
@@ -452,8 +461,11 @@ def describe_gpu() -> dict:
     return report
 
 
-def default_weight_names(steps: tuple[int, ...] = (1, 3)) -> list[str]:
-    """The manifest weights steps 1 and 3 need, read from doctor's own table.
+def default_weight_names(steps: tuple[int, ...] = (1, 2, 3)) -> list[str]:
+    """The manifest weights the given steps need, read from doctor's own table.
+
+    Defaults to all three steps, so a fresh environment prepares everything and step 2 is
+    not the thing that turns out to be missing an hour into a run.
 
     Derived rather than hand-listed, because the hand-written list this replaced had
     drifted from the truth in *both* directions: it omitted ``legibility``, which step 3
