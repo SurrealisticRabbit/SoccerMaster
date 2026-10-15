@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Sequence
 
@@ -31,6 +33,12 @@ VIS_SUBDIR = Path("visualization") / "videos"
 def sequence_name(video_id: int) -> str:
     """``10001`` -> ``'SNGS-10001'``, the directory name the dataset wrapper expects."""
     return f"SNGS-{int(video_id):05d}"
+
+
+#: How long a step may be silent before a heartbeat is printed. Module-level so tests can
+#: shrink it: a feature that only shows up after a minute of silence is otherwise
+#: impossible to verify without a minute-long test.
+HEARTBEAT_SECONDS = 60.0
 
 
 def _run(command: Sequence[str], cwd: Path, extra_env: dict | None = None) -> None:
@@ -71,6 +79,7 @@ def _run(command: Sequence[str], cwd: Path, extra_env: dict | None = None) -> No
         env.update(extra_env)
 
     print("+ " + " ".join(str(c) for c in command), flush=True)
+    step_started = time.time()
 
     # Stream, do not capture. ``capture_output=True`` held the step's entire output in
     # memory and echoed it only once the process had exited, so a step that ran for
@@ -97,6 +106,39 @@ def _run(command: Sequence[str], cwd: Path, extra_env: dict | None = None) -> No
         stderr=subprocess.STDOUT,
     )
     assert process.stdout is not None
+
+    # A heartbeat, because a step can legitimately be silent for a long time -- model
+    # loading, a weight download, or a batch that takes minutes -- and "no output" is
+    # otherwise indistinguishable from "hung". Between them, this and the streaming above
+    # mean a long run always shows either the step's own progress or proof of life.
+    #
+    # A thread rather than an alarm so it reports *during* a blocked read. It only writes
+    # when the child has actually been quiet, and it is a daemon so a failure cannot keep
+    # the process alive.
+    #
+    # `last_output` is a one-element list purely so the reader below and this thread share
+    # a mutable slot. Time since the last output is measured against it rather than by
+    # counting ticks, because a chatty step must not also be told it has gone quiet.
+    last_output = [time.time()]
+    stop_heartbeat = threading.Event()
+
+    def heartbeat() -> None:
+        last_reported = time.time()
+        while not stop_heartbeat.wait(1.0):
+            now = time.time()
+            quiet = now - last_output[0]
+            if quiet >= HEARTBEAT_SECONDS and now - last_reported >= HEARTBEAT_SECONDS:
+                last_reported = now
+                elapsed = now - step_started
+                print(
+                    f"  ... still running: {elapsed / 60:,.1f} min elapsed, "
+                    f"no output for {quiet:,.0f}s",
+                    flush=True,
+                )
+
+    monitor = threading.Thread(target=heartbeat, daemon=True)
+    monitor.start()
+
     try:
         while True:
             chunk = process.stdout.read1(4096)
@@ -105,10 +147,12 @@ def _run(command: Sequence[str], cwd: Path, extra_env: dict | None = None) -> No
             text = chunk.decode("utf-8", errors="replace")
             print(text, end="", flush=True)
             recent.append(text)
+            last_output[0] = time.time()
     except KeyboardInterrupt:
         process.terminate()
         raise
     finally:
+        stop_heartbeat.set()
         process.wait()
 
     if process.returncode:
@@ -118,6 +162,8 @@ def _run(command: Sequence[str], cwd: Path, extra_env: dict | None = None) -> No
             f"step failed (exit {process.returncode}): {cmd_text}\n"
             f"--- last output ---\n{tail_text}"
         )
+
+    print(f"  step finished in {(time.time() - step_started) / 60:,.1f} min", flush=True)
 
 
 def _tracking_command(config: str, run_dir: Path, overrides: Sequence[str]) -> list[str]:
@@ -366,6 +412,7 @@ def extract_video_frames(
     video_id: int = 10001,
     quality: int = 95,
     fps: float | None = None,
+    max_frames: int | None = None,
 ) -> Path:
     """Decode one video into the SoccerNet layout the pipeline expects.
 
@@ -391,7 +438,9 @@ def extract_video_frames(
         print(f"frames already present, skipping decode: {img1}")
         return seq_dir
 
-    result = extract_frames_from_video(str(video), str(seq_dir), quality=quality, fps=fps)
+    result = extract_frames_from_video(
+        str(video), str(seq_dir), quality=quality, fps=fps, max_frames=max_frames
+    )
     if not result.get("success"):
         raise RuntimeError(f"ffmpeg failed for {video}: {result.get('reason')}")
     print(f"decoded {result['num_frames']} frames into {img1}")
@@ -409,6 +458,7 @@ def analyze_video(
     write_video: bool = True,
     extra_overrides: Sequence[str] | None = None,
     fps: float | None = None,
+    max_frames: int | None = None,
 ) -> dict:
     """Video in, structured data out.
 
@@ -444,7 +494,9 @@ def analyze_video(
     print(f"sequence : {sequence}")
     print(f"steps    : {steps}\n")
 
-    extract_video_frames(video, dataset_dir, eval_set, video_id, quality, fps=fps)
+    extract_video_frames(
+        video, dataset_dir, eval_set, video_id, quality, fps=fps, max_frames=max_frames
+    )
 
     states: dict[int, Path] = {}
     step1_state = out_dir / STEP1_STATE

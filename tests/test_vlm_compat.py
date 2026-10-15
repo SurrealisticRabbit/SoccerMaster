@@ -13,7 +13,6 @@ Both areas held values that only worked on the machine they were written on:
 """
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -121,32 +120,32 @@ def test_vlm_load_kwargs_has_both_decisions() -> None:
 # --------------------------------------------------------------------------- #
 
 
-class _CapturingSubprocess:
-    """Stands in for the subprocess module so the ffmpeg argv can be asserted."""
+class _RecordingStream:
+    """Stands in for the ffmpeg runner so the argv and timeout can be asserted.
 
-    TimeoutExpired = subprocess.TimeoutExpired
+    Replaces an earlier fake of ``subprocess.run``: extraction now uses ``Popen`` and
+    streams progress, so the seam moved to the helper that owns that call.
+    """
 
     def __init__(self) -> None:
-        self.cmd: list[str] | None = None
+        self.cmd: list[str] = []
         self.timeout: float | None = None
+        self.expected_frames: int | None = None
+        self.returncode = 0
+        self.tail = ""
 
-    def run(self, cmd, **kwargs):  # noqa: ANN001, ANN003 - mirrors subprocess.run
-        self.cmd = cmd
-        self.timeout = kwargs.get("timeout")
-
-        class _Result:
-            returncode = 0
-            stderr = ""
-            stdout = ""
-
-        return _Result()
+    def __call__(self, cmd, timeout, expected_frames=None, report_every=5.0):  # noqa: ANN001, ARG002
+        self.cmd = list(cmd)
+        self.timeout = timeout
+        self.expected_frames = expected_frames
+        return self.returncode, self.tail
 
 
 def _extract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **kwargs):
     from soccermaster.model.data import extract_frames
 
-    capture = _CapturingSubprocess()
-    monkeypatch.setattr(extract_frames, "subprocess", capture)
+    capture = _RecordingStream()
+    monkeypatch.setattr(extract_frames, "_stream_ffmpeg", capture)
     monkeypatch.setattr(extract_frames, "probe_duration", lambda _path: 120.0)
     result = extract_frames.extract_frames_from_video(
         "match.mp4", str(tmp_path / "seq"), **kwargs
@@ -157,6 +156,7 @@ def _extract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **kwargs):
 def test_every_frame_is_kept_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     capture, result = _extract(tmp_path, monkeypatch)
     assert "-vf" not in capture.cmd
+    assert "-frames:v" not in capture.cmd
     assert result["success"] is True
 
 
@@ -165,6 +165,49 @@ def test_fps_decimates_while_decoding(tmp_path: Path, monkeypatch: pytest.Monkey
     capture, _ = _extract(tmp_path, monkeypatch, fps=5)
     assert "-vf" in capture.cmd
     assert "fps=5" in capture.cmd
+
+
+def test_max_frames_takes_a_slice(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Native-rate testing on a long video, without decimating.
+
+    ``--fps`` cannot do this: an ffmpeg fps filter still decodes every frame, so it saves
+    the downstream steps but nothing on decode, and it makes the tracker's job
+    unrealistic by stretching the gap between consecutive frames.
+    """
+    capture, _ = _extract(tmp_path, monkeypatch, max_frames=600)
+    assert "-frames:v" in capture.cmd
+    assert capture.cmd[capture.cmd.index("-frames:v") + 1] == "600"
+
+
+def test_max_frames_precedes_the_output_pattern(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """-frames:v is an output option; after the output path ffmpeg would ignore it."""
+    capture, _ = _extract(tmp_path, monkeypatch, max_frames=600)
+    assert capture.cmd.index("-frames:v") < len(capture.cmd) - 1
+    assert capture.cmd[-1].endswith("%06d.jpg")
+
+
+def test_progress_is_requested(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Decode used to be silent: ffmpeg's output was captured and thrown away."""
+    capture, _ = _extract(tmp_path, monkeypatch)
+    assert "-progress" in capture.cmd
+    assert "pipe:1" in capture.cmd
+    assert "-nostats" in capture.cmd
+
+
+def test_expected_frames_is_estimated_for_the_progress_percentage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    capture, _ = _extract(tmp_path, monkeypatch, fps=2)
+    assert capture.expected_frames == 240, "120s duration at 2 fps"
+
+
+def test_expected_frames_is_capped_by_max_frames(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    capture, _ = _extract(tmp_path, monkeypatch, fps=2, max_frames=50)
+    assert capture.expected_frames == 50
 
 
 def test_timeout_scales_with_duration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -178,7 +221,118 @@ def test_explicit_timeout_is_respected(tmp_path: Path, monkeypatch: pytest.Monke
     assert capture.timeout == 42
 
 
+def test_ffmpeg_failure_reports_the_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-zero ffmpeg must surface its output, not a bare code."""
+    from soccermaster.model.data import extract_frames
+
+    stream = _RecordingStream()
+    stream.returncode = 1
+    stream.tail = "Invalid data found when processing input"
+    monkeypatch.setattr(extract_frames, "_stream_ffmpeg", stream)
+    monkeypatch.setattr(extract_frames, "probe_duration", lambda _path: 120.0)
+
+    result = extract_frames.extract_frames_from_video(
+        "match.mp4", str(tmp_path / "seq")
+    )
+
+    assert result["success"] is False
+    assert "Invalid data" in result["reason"]
+
+
 def test_probe_duration_returns_none_instead_of_raising() -> None:
     from soccermaster.model.data.extract_frames import probe_duration
 
     assert probe_duration("/definitely/not/a/video.mp4") is None
+
+
+# --------------------------------------------------------------------------- #
+# ffmpeg progress streaming
+# --------------------------------------------------------------------------- #
+
+
+class _FakeStdout:
+    def __init__(self, lines: list[str]) -> None:
+        self._lines = lines
+
+    def __iter__(self):
+        return iter(self._lines)
+
+
+class _FakeProcess:
+    """A Popen stand-in that yields ffmpeg's -progress key=value blocks."""
+
+    def __init__(self, lines: list[str], returncode: int = 0) -> None:
+        self.stdout = _FakeStdout(lines)
+        self.returncode = returncode
+        self.killed = False
+
+    def wait(self, timeout=None) -> int:  # noqa: ANN001, ARG002
+        return self.returncode
+
+    def kill(self) -> None:
+        self.killed = True
+
+    def terminate(self) -> None:
+        self.killed = True
+
+
+def _patch_popen(monkeypatch: pytest.MonkeyPatch, lines: list[str], returncode: int = 0):
+    from soccermaster.model.data import extract_frames
+
+    process = _FakeProcess(lines, returncode)
+    monkeypatch.setattr(extract_frames.subprocess, "Popen", lambda *a, **k: process)
+    return process
+
+
+def test_progress_blocks_are_summarised_not_dumped(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Several blocks a second is noise; the summary is the useful part."""
+    from soccermaster.model.data import extract_frames
+
+    lines = [
+        "frame=100\n",
+        "fps=25.0\n",
+        "speed=4.2x\n",
+        "progress=continue\n",
+        "frame=200\n",
+        "speed=4.5x\n",
+        "progress=end\n",
+    ]
+    _patch_popen(monkeypatch, lines, returncode=0)
+
+    # report_every=0 so both blocks report, and the count is deterministic.
+    code, _ = extract_frames._stream_ffmpeg(["ffmpeg"], timeout=60, report_every=0)
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "decode" in out
+    assert "200" in out, "the final frame count should be reported"
+    assert "frame=200" not in out, "raw key=value pairs should not be dumped"
+
+
+def test_progress_shows_a_percentage_when_the_total_is_known(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from soccermaster.model.data import extract_frames
+
+    _patch_popen(monkeypatch, ["frame=500\n", "progress=end\n"], returncode=0)
+    extract_frames._stream_ffmpeg(
+        ["ffmpeg"], timeout=60, expected_frames=1000, report_every=0
+    )
+    assert "50.0%" in capsys.readouterr().out
+
+
+def test_stderr_lines_are_shown(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """stderr is merged into the same stream, so ffmpeg errors must still surface."""
+    from soccermaster.model.data import extract_frames
+
+    _patch_popen(monkeypatch, ["Error opening input file\n"], returncode=1)
+    code, tail = extract_frames._stream_ffmpeg(["ffmpeg"], timeout=60)
+    assert code == 1
+    assert "Error opening input file" in tail
+    assert "Error opening input file" in capsys.readouterr().out

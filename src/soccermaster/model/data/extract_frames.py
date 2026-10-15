@@ -86,11 +86,90 @@ def probe_duration(video_path: str) -> float | None:
         return None
 
 
+#: Keys ffmpeg emits on the ``-progress`` stream. Anything else on the merged stream is
+#: an error message and gets printed verbatim.
+_FFMPEG_PROGRESS_KEYS = {
+    "frame", "fps", "bitrate", "total_size", "out_time_us", "out_time_ms",
+    "out_time", "dup_frames", "drop_frames", "speed", "progress",
+}
+
+
+def _stream_ffmpeg(cmd, timeout, expected_frames=None, report_every=5.0):
+    """Run ffmpeg, echoing errors and summarising its ``-progress`` stream.
+
+    Returns ``(returncode, tail)`` where tail is the last of the output, for the error
+    path. Progress lines are summarised rather than printed raw because ffmpeg emits a
+    block of key=value pairs several times a second, which is noise rather than status.
+
+    Timeout is enforced here because ``Popen`` has no ``timeout`` argument; the process
+    is killed and the returncode reported as non-zero so the caller's existing failure
+    path handles it.
+    """
+    import time
+    from collections import deque
+
+    started = time.time()
+    last_report = 0.0
+    fields: dict[str, str] = {}
+    tail: deque[str] = deque(maxlen=40)
+
+    # stderr folded into stdout: one pipe to drain, so neither can fill and block.
+    process = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
+    )
+
+    def report() -> None:
+        frame = fields.get("frame", "?")
+        speed = fields.get("speed", "")
+        elapsed = time.time() - started
+        total = f"/{expected_frames}" if expected_frames else ""
+        percent = ""
+        if expected_frames and fields.get("frame", "").isdigit():
+            percent = f" ({100 * int(fields['frame']) / expected_frames:4.1f}%)"
+        print(
+            f"  decode  {frame}{total} frames{percent}  {speed}  {elapsed:,.0f}s",
+            flush=True,
+        )
+
+    assert process.stdout is not None
+    try:
+        for raw in process.stdout:
+            line = raw.rstrip("\n")
+            tail.append(line)
+            key, sep, value = line.partition("=")
+            if sep and key in _FFMPEG_PROGRESS_KEYS:
+                fields[key] = value.strip()
+                if key == "progress":  # end of one update block
+                    now = time.time()
+                    if now - last_report >= report_every:
+                        last_report = now
+                        report()
+                continue
+            if line.strip():
+                # An error or warning: show it as it happens rather than only on failure.
+                print(f"  ffmpeg: {line}", flush=True)
+
+            if time.time() - started > timeout:
+                process.kill()
+                process.wait(timeout=30)
+                return 1, f"ffmpeg exceeded {timeout:.0f}s"
+    except KeyboardInterrupt:
+        process.terminate()
+        raise
+    finally:
+        process.wait()
+
+    if fields.get("frame"):
+        report()
+    return process.returncode, "\n".join(tail)
+
+
 def extract_frames_from_video(
     video_path: str,
     output_dir: str,
     quality: int = 95,
     fps: float | None = None,
+    max_frames: int | None = None,
     timeout: float | None = None,
 ):
     """
@@ -103,8 +182,15 @@ def extract_frames_from_video(
         fps: keep only this many frames per second. ``None`` keeps every frame, which is
             what the game-state steps were built against, but it makes cost scale
             linearly with video length -- an 11-minute match at 25 fps is ~16,500 frames,
-            and step 3 asks a 7B VLM about every player in every one of them. Pass e.g.
-            ``fps=5`` to make a long match tractable.
+            and step 3 asks a 7B VLM about every player in every one of them.
+        max_frames: stop after this many output frames. This is the lever for testing at
+            **native frame rate** on a long video. ``fps`` cannot do that: an ffmpeg
+            ``fps`` filter still decodes every input frame and merely discards the ones
+            it does not want, so decimation costs the same to decode and only saves the
+            downstream steps -- while making the tracker's job unrealistically hard,
+            since it assumes small motion between consecutive frames. ``max_frames``
+            instead takes a short genuine slice of the video, so a few hundred frames
+            exercise the real thing.
         timeout: seconds to allow ffmpeg. ``None`` derives it from the video's duration.
             This was hardcoded to 300, which silently failed on any video needing more
             than five minutes of decoding and left a half-populated img1/ behind.
@@ -122,35 +208,47 @@ def extract_frames_from_video(
     # Approximate: quality 95 -> qscale 2, quality 85 -> qscale 5, quality 75 -> qscale 8
     qscale = max(2, min(31, int(2 + (100 - quality) * 29 / 100)))
 
-    cmd = ['ffmpeg', '-y', '-i', video_path]
+    cmd = ['ffmpeg', '-y', '-loglevel', 'error', '-i', video_path]
 
     if fps is not None:
         # -vf fps=N keeps/drops frames to hit N per second, applied before the encode.
         cmd += ['-vf', f'fps={fps}']
 
-    cmd += [
-        '-qscale:v', str(qscale),
-        '-start_number', '1',
-        os.path.join(img1_dir, '%06d.jpg')
-    ]
+    if max_frames is not None:
+        # An OUTPUT option, so it has to precede the output pattern.
+        cmd += ['-frames:v', str(max_frames)]
 
+    cmd += ['-qscale:v', str(qscale), '-start_number', '1']
+    # Machine-readable progress on stdout, newline-delimited key=value pairs. ffmpeg's
+    # human-readable stats are carriage-return-updated, which a pipe collapses into one
+    # unreadable line -- and until now the whole of ffmpeg's output was captured and
+    # discarded, so decoding a long video was a silent black box.
+    cmd += ['-progress', 'pipe:1', '-nostats']
+    cmd.append(os.path.join(img1_dir, '%06d.jpg'))
+
+    duration = probe_duration(video_path)
     if timeout is None:
         # Generous on purpose: decode throughput varies wildly with resolution and
         # codec, and being too tight leaves a half-populated img1/ that then
         # masquerades as a pipeline bug. Ten times realtime, floored at ten minutes.
-        duration = probe_duration(video_path)
         timeout = max(600.0, duration * 10) if duration else 3600.0
 
+    # Estimate the frame count so the progress line can show a percentage. A hint only:
+    # the real count comes from what ffmpeg actually writes.
+    expected = None
+    if duration and fps:
+        expected = max(1, int(duration * fps))
+    if expected and max_frames:
+        expected = min(expected, max_frames)
+
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        if result.returncode != 0:
-            return {"success": False, "reason": f"ffmpeg error: {result.stderr[-200:]}", "num_frames": 0}
-    except subprocess.TimeoutExpired:
-        return {
-            "success": False,
-            "reason": f"ffmpeg exceeded {timeout:.0f}s; raise timeout= or pass fps=",
-            "num_frames": 0,
-        }
+        returncode, tail = _stream_ffmpeg(cmd, timeout, expected_frames=expected)
+        if returncode != 0:
+            return {
+                "success": False,
+                "reason": f"ffmpeg error: {tail[-2000:]}",
+                "num_frames": 0,
+            }
     except FileNotFoundError:
         return {"success": False, "reason": "ffmpeg not found", "num_frames": 0}
 

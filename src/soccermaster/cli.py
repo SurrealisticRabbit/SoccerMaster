@@ -85,6 +85,7 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
         quality=args.quality,
         write_video=not args.no_video,
         fps=args.fps,
+        max_frames=args.max_frames,
     )
     print(f"\noutput directory: {result['out_dir']}")
     if result["exports"]:
@@ -164,6 +165,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="keep only this many frames per second (default: every frame). "
                         "Every step is per-frame, so this is what makes a full match "
                         "tractable, e.g. --fps 5")
+    p.add_argument("--max-frames", type=int, default=None,
+                   help="stop after this many decoded frames. Unlike --fps this takes a "
+                        "genuine slice at NATIVE rate, which is the only way to test "
+                        "tracking quality on a long video in reasonable time")
     p.add_argument("--no-video", action="store_true", help="skip writing the annotated video")
     p.set_defaults(func=_cmd_analyze)
 

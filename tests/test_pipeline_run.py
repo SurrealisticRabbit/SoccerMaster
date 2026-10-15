@@ -141,3 +141,61 @@ def test_failure_raises_with_the_tail_of_output(monkeypatch: pytest.MonkeyPatch)
 def test_successful_step_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "stdout", _Recorder())
     assert _run(_child("print('ok')"), Path(".")) is None
+
+
+# --------------------------------------------------------------------------- #
+# heartbeat
+# --------------------------------------------------------------------------- #
+
+
+def test_heartbeat_reports_while_the_child_is_silent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A step can be legitimately silent for minutes; silence must not look like a hang.
+
+    The interval is shrunk rather than the child being made to wait a minute -- hence
+    ``HEARTBEAT_SECONDS`` being module-level.
+    """
+    recorder = _Recorder()
+    monkeypatch.setattr(sys, "stdout", recorder)
+    monkeypatch.setattr(pipeline, "HEARTBEAT_SECONDS", 0.5)
+
+    _run(_child("import time; time.sleep(2.0)"), Path("."))
+
+    assert "still running" in recorder.text, "a silent step produced no heartbeat"
+    assert "no output for" in recorder.text
+
+
+def test_heartbeat_stays_quiet_when_the_child_keeps_talking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A chatty step must not be told it has gone quiet.
+
+    Counting ticks instead of measuring time since the last output gets this wrong: the
+    counter only ever rises, so continuous output still triggers the warning.
+    """
+    recorder = _Recorder()
+    monkeypatch.setattr(sys, "stdout", recorder)
+    monkeypatch.setattr(pipeline, "HEARTBEAT_SECONDS", 0.5)
+
+    _run(
+        _child(
+            "import time\n"
+            "for i in range(20):\n"
+            "    print(f'working {i}', flush=True)\n"
+            "    time.sleep(0.15)\n"
+        ),
+        Path("."),
+    )
+
+    assert "working 19" in recorder.text
+    assert "still running" not in recorder.text, (
+        "the heartbeat fired even though the child never stopped printing"
+    )
+
+
+def test_step_duration_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    recorder = _Recorder()
+    monkeypatch.setattr(sys, "stdout", recorder)
+
+    _run(_child("import time; time.sleep(0.4); print('done')"), Path("."))
+
+    assert "step finished in" in recorder.text
