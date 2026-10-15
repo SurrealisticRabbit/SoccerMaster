@@ -475,6 +475,48 @@ def default_weight_names(steps: tuple[int, ...] = (1, 3)) -> list[str]:
     return list(dict.fromkeys(names))
 
 
+def _memory_watcher(interval: float = 30.0) -> None:
+    """Print process RSS and GPU memory every ``interval`` seconds, from a daemon thread.
+
+    Step 3 died silently about 17 minutes in, with no traceback anywhere: the child's own
+    log ends at "Pipeline has been validated" and Modal has no app left to query. A death
+    with no exception is a SIGKILL, and an OOM kill is by far the likeliest reason. That is
+    invisible by construction -- the kernel does not get to write a Python traceback -- so
+    the only way to confirm or rule it out is to watch the numbers climb beforehand.
+
+    Worth keeping regardless of this investigation: it turns "it died" into "it died at
+    31 GiB after 14 minutes", which is a diagnosis rather than a mystery.
+    """
+    import threading
+    import time
+
+    def loop() -> None:
+        while True:
+            time.sleep(interval)
+            parts: list[str] = []
+            try:
+                import psutil
+
+                rss = psutil.Process().memory_info().rss / 1e9
+                vm = psutil.virtual_memory()
+                parts.append(f"rss={rss:.1f}GB of {vm.total / 1e9:.0f}GB")
+            except Exception as exc:  # noqa: BLE001
+                parts.append(f"rss=?({type(exc).__name__})")
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    parts.append(
+                        f"gpu_alloc={torch.cuda.memory_allocated() / 1e9:.1f}GB"
+                        f" reserved={torch.cuda.memory_reserved() / 1e9:.1f}GB"
+                    )
+            except Exception as exc:  # noqa: BLE001
+                parts.append(f"gpu=?({type(exc).__name__})")
+            print("  [mem] " + "  ".join(parts), flush=True)
+
+    threading.Thread(target=loop, daemon=True).start()
+
+
 @app.function(image=image, volumes=VOLUMES, env=ENV, timeout=7200)
 def prepare(names: list[str] | None = None) -> str:
     """Download weights into the volume. Run once; they persist.
@@ -568,6 +610,10 @@ def analyze(
     # in how long the tracking took.
     gpu = describe_gpu()
     print(f"gpu      : {json.dumps(gpu)}", flush=True)
+
+    # Watch memory for the whole run: a silent death with no traceback is a SIGKILL, and
+    # the trend before it is the only evidence available.
+    _memory_watcher()
 
     # Say what this run is about to cost in wall-clock before spending it. A full native
     # run is roughly two hours, and finding that out only afterwards -- or not at all --
