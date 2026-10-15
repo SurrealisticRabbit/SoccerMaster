@@ -135,6 +135,30 @@ class PitchVisualizationEngine(Callback):
         image_gts = tracker_state.image_gt[tracker_state.image_gt.video_id == video_id]
         nframes = len(image_metadatas)
         video_name = tracker_state.video_metadatas.loc[video_id].name
+
+        # Nothing to draw in two situations that are both normal, and neither of which this
+        # should crash on. `create_draw_args` filters `detections.image_id`, so a detections
+        # frame with no columns at all raises `AttributeError: 'DataFrame' object has no
+        # attribute 'image_id'` -- which is how step 3 failed, *after* all thirteen modules
+        # had run and before the tracker state was saved, so the whole step's output was
+        # lost to a rendering problem. An unannotated video would be worse than no video,
+        # because it looks like a result.
+        if not nframes:
+            log.warning(
+                "no frames for video %s in the tracker state; skipping visualization",
+                video_id,
+            )
+            return
+        if "image_id" not in detections.columns:
+            log.warning(
+                "detections has no 'image_id' column (has: %s); skipping visualization "
+                "for %s. An empty or mismatched tracker state is the usual cause; the "
+                "step's outputs are unaffected.",
+                list(detections.columns),
+                video_name,
+            )
+            return
+
         if progress:
             if self.cfg.process_n_frames_by_video == -1:
                 total = len(image_metadatas.index)
