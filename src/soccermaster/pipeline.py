@@ -345,6 +345,7 @@ def run_step2(
     sam_config: str | None = None,
     extra_args: Sequence[str] = (),
     processes_per_gpu: int = 1,
+    visualize_video: bool = False,
 ) -> Path:
     """SAM 2 segmentation refinement. Requires the optional ``sam2`` extra.
 
@@ -403,6 +404,12 @@ def run_step2(
         str(refined),
         *extra_args,
     ]
+    # SAM 2 can render what it produced -- masks, prompts, and the refined boxes -- but
+    # only when asked, and nothing was asking, so a step-2 run left no video to inspect.
+    # The masks are the whole point of step 2 and the only way to see whether they are
+    # good is to look at them.
+    if visualize_video:
+        command.append("--visualize_video")
     if video_ids:
         command += ["--video_id_list", ",".join(str(v) for v in video_ids)]
 
@@ -567,7 +574,12 @@ def analyze_video(
         if not step1_state.is_file():
             raise FileNotFoundError(f"step 2 needs {step1_state}; run step 1 first")
         step2_state = run_step2(
-            step1_state, dataset_dir, out_dir, [video_id], eval_set, device
+            step1_state, dataset_dir, out_dir, [video_id], eval_set, device,
+            # Tie step 2's visualization to the same switch as every other step's. It
+            # walks every frame and draws masks onto each one, so it is real work -- but a
+            # step-2 run with no video is very hard to judge, since the masks are the
+            # entire output.
+            visualize_video=write_video,
         )
         states[2] = step2_state
 
@@ -690,7 +702,10 @@ def run_pipeline(
             raise FileNotFoundError(
                 f"step 2 needs the step-1 state at {step1_state}; run step 1 first"
             )
-        step2_state = run_step2(step1_state, dataset_path, out_dir, video_ids, eval_set, device)
+        step2_state = run_step2(
+            step1_state, dataset_path, out_dir, video_ids, eval_set, device,
+            visualize_video=save_videos,
+        )
     if 3 in steps:
         source = step2_state if step2_state.is_file() else step1_state
         if not source.is_file():

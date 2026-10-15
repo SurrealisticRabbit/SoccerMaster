@@ -211,3 +211,59 @@ def test_step2_exposes_processes_per_gpu() -> None:
     assert parameters["processes_per_gpu"].default == 1
     source = inspect.getsource(pipeline_mod.run_step2)
     assert "--max_processes_per_gpu" in source, "the flag must actually be passed through"
+
+
+# --------------------------------------------------------------------------- #
+# step 2's visualization
+# --------------------------------------------------------------------------- #
+
+
+def test_step2_can_be_asked_for_a_visualization() -> None:
+    """The masks ARE step 2's output, and a run that renders none is hard to judge.
+
+    `sam2_refine` has always supported `--visualize_video`, but nothing passed it, so a
+    completed step-2 run left no video to inspect -- only a 850 MB pickle.
+    """
+    import inspect
+
+    from soccermaster import pipeline as pipeline_mod
+
+    parameters = inspect.signature(pipeline_mod.run_step2).parameters
+    assert "visualize_video" in parameters
+    assert parameters["visualize_video"].default is False, (
+        "off by default: it walks every frame, so it should be asked for"
+    )
+    source = inspect.getsource(pipeline_mod.run_step2)
+    assert '"--visualize_video"' in source
+
+
+def test_step2_visualization_follows_the_pipeline_video_switch() -> None:
+    """`analyze_video` and `run_pipeline` tie it to their own video flag.
+
+    Otherwise `--no-video` would silently leave three videos being written by a step the
+    user asked to be quiet.
+    """
+    import inspect
+
+    from soccermaster import pipeline as pipeline_mod
+
+    for name in ("analyze_video", "run_pipeline"):
+        source = inspect.getsource(getattr(pipeline_mod, name))
+        assert "visualize_video=" in source, f"{name} does not wire step 2's visualization"
+
+
+def test_the_three_step2_videos_are_named_where_we_will_look_for_them() -> None:
+    """`_generate_visualization` writes them into step2/ as <id>_*_video.mp4.
+
+    Recorded here because the fetch path depends on it and it is not obvious: steps 1 and 3
+    put videos under visualization/videos/, step 2 puts them straight into step2/.
+    """
+    import inspect
+
+    from soccermaster.sam2_refine import inference
+
+    source = inspect.getsource(inference._generate_visualization)
+    for suffix in ("_prompts_video.mp4", "_detections_segments_video.mp4",
+                   "_all_segments_video.mp4"):
+        assert suffix in source, f"expected a {suffix} output"
+    assert "args.output_dir" in source, "written into step2/, not a visualization subdir"
