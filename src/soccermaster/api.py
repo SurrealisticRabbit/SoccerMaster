@@ -23,6 +23,16 @@ from typing import Iterable, Sequence
 from soccermaster import paths
 from soccermaster.downloads import prepare, prepare_all  # noqa: F401  (re-exported)
 
+# Re-exported rather than re-declared. These two used to be hand-written pass-throughs
+# that listed every argument explicitly, and they drifted: api.analyze_video had already
+# lost ``quality``, and it did not gain ``fps`` when that was added, so
+# ``sm.analyze_video(..., fps=1)`` raised TypeError while the identical CLI call -- which
+# goes straight to pipeline.analyze_video -- worked fine. That asymmetry is what made the
+# fault hard to see: ``sm.analyze_video`` is resolved through this module (see the _LAZY
+# map in __init__.py), so the broken path was the documented API surface, not the CLI.
+# Re-exporting leaves one signature to keep correct instead of two that can diverge.
+from soccermaster.pipeline import analyze_video, run_pipeline  # noqa: F401  (re-exported)
+
 CONFIG_DIR = Path(__file__).parent / "model" / "configs"
 
 #: Map the public task names onto the dataset keys used by the model config.
@@ -210,57 +220,5 @@ def predict(model, frames, task: str = "detection", device: str | None = None) -
     return result
 
 
-def run_pipeline(
-    frames_dir: str | Path,
-    out_dir: str | Path | None = None,
-    steps: Sequence[int] = (1, 2, 3),
-    video_ids: Sequence[int] | None = None,
-    device: str = "cuda",
-    extra_overrides: Sequence[str] | None = None,
-) -> Path:
-    """Run the 3-step SoccerNet game-state pipeline on a folder of frames.
-
-    Steps run through the same Hydra configs as the original repo, with paths
-    injected instead of the hardcoded ``10001/10002`` sequence ids.
-
-    Note: step 2 requires the optional ``sam2`` extra and a CUDA build.
-    """
-    from soccermaster.pipeline import run_pipeline as _run
-
-    return _run(
-        frames_dir=frames_dir,
-        out_dir=out_dir,
-        steps=steps,
-        video_ids=video_ids,
-        device=device,
-        extra_overrides=extra_overrides,
-    )
-
-
-def analyze_video(
-    video: str | Path,
-    out_dir: str | Path | None = None,
-    eval_set: str = "sn500",
-    video_id: int = 10001,
-    steps: Sequence[int] = (1, 3),
-    device: str = "cuda",
-    write_video: bool = True,
-    extra_overrides: Sequence[str] | None = None,
-) -> dict:
-    """Analyse one video: decode it, run the game-state steps, export the data.
-
-    Returns a dict with ``exports`` (CSV/JSONL/JSON paths), ``states``, ``videos``
-    and the output directory. This is the video-in / data-out entry point.
-    """
-    from soccermaster.pipeline import analyze_video as _analyze
-
-    return _analyze(
-        video=video,
-        out_dir=out_dir,
-        eval_set=eval_set,
-        video_id=video_id,
-        steps=steps,
-        device=device,
-        write_video=write_video,
-        extra_overrides=extra_overrides,
-    )
+# `run_pipeline` and `analyze_video` are re-exported from soccermaster.pipeline; see the
+# import at the top of this module for why they are not declared here.

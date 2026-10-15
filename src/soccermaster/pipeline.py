@@ -34,15 +34,17 @@ def sequence_name(video_id: int) -> str:
 
 
 def _run(command: Sequence[str], cwd: Path, extra_env: dict | None = None) -> None:
-    """Run a pipeline step, showing its output and surfacing its error.
+    """Run a pipeline step, streaming its output and surfacing its error.
 
-    The step runs in a subprocess (Hydra owns that entry point). Its output is
-    captured, echoed, and on failure re-raised with the tail of stderr attached --
-    without this a failing step surfaces only as ``CalledProcessError`` with no
-    reason, which is the worst possible thing to debug from a notebook.
+    The step runs in a subprocess (Hydra owns that entry point). Its output is streamed
+    as it arrives rather than captured and echoed at the end, and on failure it is
+    re-raised with the tail attached -- without the tail a failing step surfaces only as
+    ``CalledProcessError`` with no reason, which is the worst thing to debug from a
+    notebook, and without the streaming a long step is indistinguishable from a hang.
     """
     import copy
     import os
+    from collections import deque
 
     env = copy.deepcopy(os.environ)
     # torch >= 2.6 flipped torch.load's weights_only default to True, which breaks
@@ -60,23 +62,61 @@ def _run(command: Sequence[str], cwd: Path, extra_env: dict | None = None) -> No
     # md5 verification, or from Hugging Face -- i.e. the same trust level as any
     # pretrained weights, and exactly the "trusted source" case torch documents.
     env.setdefault("TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD", "1")
+    # The child's stdout is a pipe here, and Python block-buffers a pipe by default, so
+    # without this the step's own prints still arrive in 8 KB bursts rather than live.
+    # tqdm and rich write to stderr and flush themselves, but everything the pipeline
+    # prints does not.
+    env.setdefault("PYTHONUNBUFFERED", "1")
     if extra_env:
         env.update(extra_env)
 
     print("+ " + " ".join(str(c) for c in command), flush=True)
-    result = subprocess.run(
-        [str(c) for c in command], cwd=str(cwd), env=env,
-        capture_output=True, text=True,
+
+    # Stream, do not capture. ``capture_output=True`` held the step's entire output in
+    # memory and echoed it only once the process had exited, so a step that ran for
+    # twenty minutes printed nothing for twenty minutes: the progress bar and
+    # ``Tracking videos 1/1`` all appeared at the very end. In a notebook that was
+    # survivable; in a log-only environment such as Modal it makes a working run
+    # indistinguishable from a hung one, because there is no window to look at.
+    #
+    # stderr is folded into stdout deliberately: one pipe is simpler to drain, and two
+    # pipes drained one-at-a-time can deadlock when the unread one fills its buffer.
+    #
+    # No ``text=True``, and ``read1`` rather than ``read``. On a pipe, ``read(n)`` blocks
+    # until it has n characters or hits EOF -- so a 256-char ``read`` reproduced the very
+    # buffering this is meant to remove (measured: a child printing every 0.7 s for 2.1 s
+    # delivered all three lines at the end). ``read1`` issues at most one underlying read
+    # and returns whatever is available, and decoding by hand keeps partial lines and the
+    # carriage-return updates that tqdm emits from being held back for a newline.
+    recent: deque[str] = deque(maxlen=400)
+    process = subprocess.Popen(
+        [str(c) for c in command],
+        cwd=str(cwd),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
     )
-    if result.stdout:
-        print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
-    if result.stderr:
-        print(result.stderr, end="" if result.stderr.endswith("\n") else "\n")
-    if result.returncode:
-        tail = "\n".join((result.stderr or result.stdout or "").strip().splitlines()[-25:])
+    assert process.stdout is not None
+    try:
+        while True:
+            chunk = process.stdout.read1(4096)
+            if not chunk:
+                break
+            text = chunk.decode("utf-8", errors="replace")
+            print(text, end="", flush=True)
+            recent.append(text)
+    except KeyboardInterrupt:
+        process.terminate()
+        raise
+    finally:
+        process.wait()
+
+    if process.returncode:
+        cmd_text = " ".join(str(c) for c in command)
+        tail_text = "\n".join("".join(recent).strip().splitlines()[-25:])
         raise RuntimeError(
-            f"step failed (exit {result.returncode}): {' '.join(str(c) for c in command)}\n"
-            f"--- last output ---\n{tail}"
+            f"step failed (exit {process.returncode}): {cmd_text}\n"
+            f"--- last output ---\n{tail_text}"
         )
 
 

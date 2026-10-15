@@ -25,6 +25,30 @@ Videos live in the ``soccermaster-videos`` volume rather than being baked into t
 so a large clip is downloaded once instead of re-uploaded into the image on every run.
 ``--cmd fetch`` pulls the exported data back into ``./modal-outputs``.
 
+Getting around a slow Origin
+---------------------------
+Two checkpoints are fetched lazily rather than by ``prepare``: the ReID weights and the
+calibration sets. They come from Zenodo, which serves a Modal container at roughly
+110 KB/s -- about 20x slower than the same URL from a laptop -- so a 396 MB checkpoint is
+nearly an hour and the connection tends to drop part-way. The downloader resumes and
+retries, so it does eventually finish, but the fastest route is to fetch it once locally
+and push it into the volume::
+
+    curl -L -o prtreid-soccernet-baseline.pth.tar \\
+      "https://zenodo.org/records/10653453/files/prtreid-soccernet-baseline.pth.tar?download=1"
+    curl -L -o hrnetv2_w32_imagenet_pretrained.pth \\
+      "https://zenodo.org/records/10604211/files/hrnetv2_w32_imagenet_pretrained.pth?download=1"
+    modal volume put soccermaster-weights prtreid-soccernet-baseline.pth.tar /reid/
+    modal volume put soccermaster-weights hrnetv2_w32_imagenet_pretrained.pth /reid/
+
+The pipeline accepts them only if they verify: ``download_file`` checks
+``prtreid-soccernet-baseline.pth.tar`` against md5 ``9633825232bc89f23a94522c5561650e`` and
+``hrnetv2_w32_imagenet_pretrained.pth`` against ``58ea12b0420aa3adaa2f74114c9f9721``, and
+refetches anything that does not match. Check locally first with ``md5sum``/``certutil``.
+
+``--cmd net`` measures throughput from the container per host, which distinguishes a slow
+origin from a slow container.
+
 ``doctor`` has been run against the real app. The rest has not, so expect to fix one or
 two things on first use.
 """
@@ -41,11 +65,25 @@ import modal
 # --------------------------------------------------------------------------- #
 
 REPO = "https://github.com/SurrealisticRabbit/SoccerMaster.git"
-#: Track main so the app always carries the latest pipeline fixes. Pinning to a tag is
-#: better for reproducibility, but only once that tag contains the fix you need -- the
-#: released v1.0.1-alpha predates the step-3 attention-backend fix, so tagging here would
-#: silently reintroduce a broken step 3.
-REF = "main"
+
+#: A specific commit, NOT a branch name -- and that is not just about reproducibility.
+#: Modal caches image layers by their definition string, and `@main` is a fixed string
+#: that never changes as the branch advances, so the cache never invalidates and the
+#: container keeps running whatever `main` pointed at when the image was first built.
+#: That happened here: `doctor` reported `soccermaster 1.0.1a0` (the tag commit, i.e.
+#: what `main` was at the time) while `main` had already moved on, so the step-3
+#: attention/dtype fixes and `--fps` were silently absent. Pinning a SHA changes the
+#: definition string, which forces the rebuild, and makes the installed code version
+#: explicit in this file. Bump it on each push you want deployed.
+#:
+#: Note this governs only the *package* installed from git. modal_app.py itself is
+#: uploaded from local disk on every run, so edits here take effect immediately.
+#: Bump this when anything under ``src/`` changes, or the image keeps serving the old
+#: package: Modal caches layers by definition string and this is what makes it specific.
+#: Current value carries the pandas 3 fix for merge_dataframes, which is what killed the
+#: first run against real footage: string track ids were being written into a column that
+#: NaN seeding had made float64.
+REF = "2a3b7032d5b4be05e0ff63c9164b75d270e04dd5"
 
 #: Local directory the exported data is written back to by ``--cmd fetch``.
 LOCAL_OUTPUT_DIR = Path("modal-outputs")
@@ -106,6 +144,12 @@ VOLUMES = {
 
 ENV = {"SOCCERMASTER_HOME": "/data"}
 
+#: albumentations performs a network update check at import time, which is pure noise
+#: here and a second way for an import to block on the network. The check prints a
+#: warning we saw in every doctor run; this removes both the warning and the dependency
+#: on reaching PyPI before a pipeline step can even start.
+ENV["NO_ALBUMENTATIONS_UPDATE"] = "1"
+
 #: Set explicitly rather than relying only on the package's own default. torch >= 2.6
 #: flipped torch.load's weights_only to True, which breaks the third-party checkpoint
 #: loaders in this stack (prtreid, ultralytics). soccermaster sets this itself for the
@@ -147,15 +191,25 @@ def fetch_video(url: str = "", name: str = "") -> dict:
     output = str(dest_dir / name) if name else str(dest_dir) + os.sep
 
     started = time.time()
-    out = gdown.download(url=url, output=output, fuzzy=True, quiet=False)
-    if not out or not Path(out).is_file():
-        return {"error": f"gdown could not download {url}"}
+
+    # No `fuzzy=` here. That argument existed in gdown 4.x and was removed in 5.0, while
+    # pyproject floors gdown at >=5.0 -- so passing it raises TypeError before any
+    # download starts. gdown resolves a /file/d/<id>/view link from `url` on its own.
+    out = gdown.download(url=url, output=output, quiet=False)
+
+    # The declared return type is a union, so do not assume it is a path.
+    if not isinstance(out, (str, os.PathLike)):
+        return {"error": f"gdown returned {type(out).__name__}, not a path: {out!r}"}
+
+    path = Path(out)
+    if not path.is_file():
+        return {"error": f"gdown reported {out} but no file is there"}
 
     videos_volume.commit()
-    size = Path(out).stat().st_size
+    size = path.stat().st_size
     return {
-        "name": Path(out).name,
-        "path": str(out),
+        "name": path.name,
+        "path": str(path),
         "size_gb": round(size / 1e9, 2),
         "seconds": round(time.time() - started, 1),
     }
@@ -170,6 +224,132 @@ def list_videos() -> list[str]:
     return sorted(
         f"{p.name}  ({p.stat().st_size / 1e9:.2f} GB)" for p in root.iterdir() if p.is_file()
     )
+
+
+@app.function(image=image, gpu=GPU, volumes=VOLUMES, env=ENV, timeout=300)
+def gpu_check() -> dict:
+    """Confirm the GPU is attached and actually works, without running the pipeline.
+
+    ``doctor`` cannot answer this. A Modal function's GPU spec is fixed at definition
+    time and ``doctor`` deliberately declares none, so that a pre-flight costs nothing --
+    which means it always reports "no CUDA device visible", correctly, about its own
+    CPU-only container. That is easy to misread as "the GPU is not working", so this is
+    the GPU-attached counterpart. It costs a few seconds of GPU time.
+    """
+    return describe_gpu()
+
+
+@app.function(image=image, volumes=VOLUMES, env=ENV, timeout=600)
+def net_check(megabytes: float = 20.0) -> dict:
+    """Measure download throughput from this container, per host.
+
+    Throughput from a Modal container is not the same as throughput from a laptop, and
+    "it is downloading at KB/s" has two very different explanations: the remote host is
+    throttling us, or this container's route to it is poor. Downloading a fixed number of
+    bytes from several hosts distinguishes them -- if Zenodo is slow here while a control
+    host is fast, it is Zenodo (or our path specifically to it), not the container.
+
+    Costs no GPU. Uses ranged requests so it stops after the requested size.
+    """
+    import time
+
+    import requests
+
+    targets = {
+        # The two checkpoints the pipeline fetches on first use.
+        "zenodo/prtreid": "https://zenodo.org/records/10653453/files/"
+        "prtreid-soccernet-baseline.pth.tar?download=1",
+        "zenodo/hrnet": "https://zenodo.org/records/10604211/files/"
+        "hrnetv2_w32_imagenet_pretrained.pth?download=1",
+        # Controls: the same infrastructure that already served the weights quickly.
+        "huggingface": "https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct/resolve/main/"
+        "config.json",
+        "pypi": "https://files.pythonhosted.org/packages/source/r/requests/"
+        "requests-2.32.3.tar.gz",
+    }
+
+    wanted = int(megabytes * 1e6)
+    results: dict = {}
+
+    for name, url in targets.items():
+        try:
+            started = time.time()
+            got = 0
+            with requests.get(
+                url, stream=True, timeout=(15, 60), headers={"Range": f"bytes=0-{wanted - 1}"}
+            ) as response:
+                if response.status_code not in (200, 206):
+                    results[name] = f"HTTP {response.status_code}"
+                    continue
+                for chunk in response.iter_content(chunk_size=1 << 20):
+                    got += len(chunk)
+                    if got >= wanted:
+                        break
+            elapsed = time.time() - started
+            results[name] = {
+                "mb_downloaded": round(got / 1e6, 2),
+                "seconds": round(elapsed, 2),
+                "mb_per_sec": round((got / 1e6) / elapsed, 2) if elapsed else None,
+            }
+        except Exception as exc:  # noqa: BLE001 - a failure here is a result too
+            results[name] = f"{type(exc).__name__}: {exc}"
+
+    return {"requested_mb": megabytes, "throughput": results}
+
+
+def json_safe(payload: dict) -> dict:
+    """Reduce a payload to JSON primitives, and say so if anything had to be coerced.
+
+    Modal pickles a function's return value and deserializes it in the **client**
+    environment -- here the ``.venv`` that drives ``modal run``, which has no torch. A
+    four-minute run therefore died at the very last step: the pipeline finished, the
+    volume was committed, and the results could not be transferred back because
+    something in the payload referenced torch::
+
+        DeserializationError: Deserialization failed because the 'torch' module is not
+        available in the local environment.
+
+    Round-tripping through JSON removes that entire class of failure: what comes back is
+    plain ``str``/``int``/``float``/``bool``/``None``. It is a no-op for a payload that
+    was already plain, so it costs one small serialization.
+
+    The offending key is named rather than silently stringified, because the symptom --
+    a successful run reported as a failure -- is confusing enough that the reason should
+    not also be a mystery.
+    """
+    import json
+
+    # type(...) in, not isinstance: `type(v) is str` excludes TorchVersion and every other
+    # subclass that json accepts but pickle cannot resolve without its defining module.
+    primitives = (str, int, float, bool, type(None))
+
+    def offenders(value, path=""):  # noqa: ANN001, ANN202 - small local walker
+        found: list[str] = []
+        if type(value) in primitives:
+            return found
+        if isinstance(value, dict):
+            for key, item in value.items():
+                found += offenders(item, f"{path}.{key}" if path else str(key))
+        elif isinstance(value, (list, tuple)):
+            for index, item in enumerate(value):
+                found += offenders(item, f"{path}[{index}]")
+        else:
+            defined = f"{type(value).__module__}.{type(value).__name__}"
+            found.append(f"{path} ({defined})" if path else defined)
+        return found
+
+    problems = offenders(payload)
+    if problems:
+        print(
+            "coerced non-plain values (pickle would need these modules client-side): "
+            + "; ".join(problems[:20]),
+            flush=True,
+        )
+
+    # Unconditional, not guarded on json.dumps succeeding: a str/int/float SUBCLASS
+    # serializes fine and then fails to unpickle, so the round trip is what removes the
+    # class rather than a check that cannot see it.
+    return json.loads(json.dumps(payload, default=str))
 
 
 @app.function(image=image, volumes=VOLUMES, env=ENV, timeout=1800)
@@ -190,7 +370,88 @@ def doctor(steps: str = "1,3") -> str:
         capture_output=True,
         text=True,
     )
-    return proc.stdout + ("\n--- stderr ---\n" + proc.stderr if proc.stderr else "")
+
+    # Report what the INSTALLED package actually provides. The image's package and this
+    # file version independently, and that mismatch cost a run: `sm.analyze_video`
+    # resolved through soccermaster.api to a copy that had lost `fps`, which looked
+    # exactly like a stale image and sent me bisecting the image cache instead. Printing
+    # the real signature and the identity check makes that a one-command answer.
+    import inspect
+
+    import soccermaster
+    from soccermaster import pipeline
+
+    lines = [
+        "",
+        "Installed package (what this image actually has)",
+        "-----------------------------------------------",
+        f"  version              : {soccermaster.__version__}",
+        f"  path                 : {soccermaster.__file__}",
+        f"  analyze_video params : {list(inspect.signature(pipeline.analyze_video).parameters)}",
+        "  sm.analyze_video is pipeline.analyze_video: "
+        f"{soccermaster.analyze_video is pipeline.analyze_video}",
+    ]
+
+    out = proc.stdout + "\n".join(lines)
+    return out + ("\n--- stderr ---\n" + proc.stderr if proc.stderr else "")
+
+
+def describe_gpu() -> dict:
+    """What GPU this container has, proven by running a kernel rather than by a flag.
+
+    ``torch.cuda.is_available()`` only says a device is visible; the matmul below says
+    it can actually execute, which is the thing worth knowing before a long run.
+    """
+    import torch
+
+    report: dict = {
+        "torch": torch.__version__,
+        "cuda_build": torch.version.cuda,
+        "cuda_available": torch.cuda.is_available(),
+    }
+    if not torch.cuda.is_available():
+        return report
+
+    major, minor = torch.cuda.get_device_capability()
+    report.update(
+        device_count=torch.cuda.device_count(),
+        device_name=torch.cuda.get_device_name(0),
+        capability=f"{major}.{minor}",
+        vram_gb=round(torch.cuda.get_device_properties(0).total_memory / 1e9, 1),
+        # FlashAttention-2 needs Ampere or newer; on Turing the import succeeds and the
+        # kernels fail, so this is the capability that actually decides the backend.
+        flash_attn_usable=major >= 8,
+    )
+    try:
+        x = torch.randn(512, 512, device="cuda", dtype=torch.bfloat16)
+        report["bf16_matmul_ok"] = bool(torch.isfinite(x @ x).all().item())
+    except Exception as exc:  # noqa: BLE001 - the report is more useful than a raise
+        report["bf16_matmul_ok"] = f"{type(exc).__name__}: {exc}"
+    return report
+
+
+def default_weight_names(steps: tuple[int, ...] = (1, 3)) -> list[str]:
+    """The manifest weights steps 1 and 3 need, read from doctor's own table.
+
+    Derived rather than hand-listed, because the hand-written list this replaced had
+    drifted from the truth in *both* directions: it omitted ``legibility``, which step 3
+    requires (doctor reports it as a hard failure before any run), and it included
+    ``siglip`` and ``soccermaster``, which the three-step pipeline never loads -- several
+    GB fetched for nothing. Reading STEP_REQUIREMENTS means prepare and doctor cannot
+    disagree again.
+
+    Deliberately lives here rather than in the package: modal_app.py is uploaded from
+    local disk on every run, so this takes effect immediately, whereas the same change
+    inside soccermaster would need a new commit, a bumped REF and another image rebuild.
+    """
+    from soccermaster.preflight import STEP_REQUIREMENTS
+
+    names: list[str] = []
+    for step in steps:
+        names += STEP_REQUIREMENTS[step]["manifest"]
+    # reid/calibration are `runtime` (the pipeline fetches them itself) and so are absent
+    # by construction. dict.fromkeys keeps insertion order while de-duplicating.
+    return list(dict.fromkeys(names))
 
 
 @app.function(image=image, volumes=VOLUMES, env=ENV, timeout=7200)
@@ -203,7 +464,7 @@ def prepare(names: list[str] | None = None) -> str:
     import subprocess
     import sys
 
-    names = names or ["siglip", "soccermaster", "yolo", "qwen7b"]
+    names = names or default_weight_names()
     out = [f"fetching: {', '.join(names)}"]
     for name in names:
         proc = subprocess.run(
@@ -263,6 +524,12 @@ def analyze(
             "hint": "fetch one first: --cmd video --url '<share link>'",
         }
 
+    # Report the GPU before anything else, so every run states which card it got and
+    # that it can execute. Without this the only place the GPU appeared was implicitly,
+    # in how long the tracking took.
+    gpu = describe_gpu()
+    print(f"gpu      : {json.dumps(gpu)}", flush=True)
+
     # `workers` was accepted and ignored. num_cores is the override that actually
     # controls dataloader workers, and doctor warns loudly when it exceeds the CPU count.
     extra = [f"num_cores={workers}"] if workers else None
@@ -283,6 +550,7 @@ def analyze(
 
     # Read the exported data back so the caller gets it without a volume round-trip.
     payload: dict = {
+        "gpu": gpu,
         "out_dir": str(result["out_dir"]),
         "exports": {k: str(v) for k, v in result["exports"].items()},
         "videos": [str(v) for v in result["videos"]],
@@ -299,7 +567,9 @@ def analyze(
             payload["files"][kind] = {"header": lines[:1], "n_rows": max(0, len(lines) - 1), "preview": lines[:6]}
 
     outputs_volume.commit()
-    return payload
+    # Committed first: the produced data is the valuable thing, and it must survive even
+    # if transferring the summary back fails.
+    return json_safe(payload)
 
 
 @app.function(image=image, volumes=VOLUMES, env=ENV, timeout=1800)
@@ -326,7 +596,7 @@ def main(
     fps: float = 0.0,
     steps: str = "1,3",
 ) -> None:
-    """``modal run modal_app.py --cmd <doctor|prepare|video|videos|analyze|list|fetch>``"""
+    """``modal run modal_app.py --cmd <doctor|gpu|net|prepare|video|videos|analyze|list|fetch>``"""
     import json
     import subprocess
 
@@ -336,6 +606,10 @@ def main(
 
     if cmd == "doctor":
         print(doctor.remote())
+    elif cmd == "gpu":
+        print(json.dumps(gpu_check.remote(), indent=2))
+    elif cmd == "net":
+        print(json.dumps(net_check.remote(), indent=2))
     elif cmd == "prepare":
         print(prepare.remote())
     elif cmd == "video":
@@ -371,5 +645,5 @@ def main(
         print(f"\nexit {proc.returncode}; data is under {LOCAL_OUTPUT_DIR}/")
     else:
         raise SystemExit(
-            f"unknown cmd {cmd!r}; use doctor, prepare, video, videos, analyze, list or fetch"
+            f"unknown cmd {cmd!r}; use doctor, gpu, net, prepare, video, videos, analyze, list or fetch"
         )
