@@ -486,7 +486,11 @@ def prepare(names: list[str] | None = None) -> str:
     gpu=GPU,
     volumes=VOLUMES,
     env=ENV,
-    timeout=7200,
+    # A full native-rate run is ~2 h of tracking plus setup, so the old 2 h cap would
+    # have killed it mid-way and thrown the result away. Bounded rather than unlimited on
+    # purpose: a hung run should stop, not bill indefinitely. The heartbeat in the
+    # pipeline and the plan estimate printed above make it visible long before this.
+    timeout=6 * 60 * 60,
 )
 def analyze(
     video: str,
@@ -494,6 +498,8 @@ def analyze(
     steps: tuple[int, ...] = (1, 3),
     workers: int | None = None,
     fps: float | None = None,
+    max_frames: int | None = None,
+    write_video: bool = True,
 ) -> dict:
     """Video in, structured data out.
 
@@ -504,8 +510,20 @@ def analyze(
     ``fps`` decimates while decoding. Every step runs per frame, so on an 11-minute match
     (~16,500 frames at 25 fps) step 3 means asking a 7B VLM about every player in every
     frame -- pass ``fps=1`` for a first smoke test rather than waiting on the full set.
+
+    ``max_frames`` instead takes a genuine *slice* at native frame rate, which is what
+    ``fps`` cannot do: an ffmpeg fps filter still decodes every input frame, so
+    decimation saves the downstream steps but not the decode, and it stretches the gap
+    between consecutive frames so the tracker -- which assumes small inter-frame motion
+    -- is tested under unrealistic conditions. A few hundred frames at native rate is
+    the honest way to judge tracking quality on a long video.
+
+    ``write_video=False`` skips the annotated mp4. Worth setting on a long run: it was
+    110 MB for 680 frames, so native rate is a few GB, it is CPU work on a GPU-priced
+    container, and it is a *view* of the run rather than part of the deliverable.
     """
     import json
+    import time
     import traceback
     from pathlib import Path
 
@@ -530,10 +548,34 @@ def analyze(
     gpu = describe_gpu()
     print(f"gpu      : {json.dumps(gpu)}", flush=True)
 
+    # Say what this run is about to cost in wall-clock before spending it. A full native
+    # run is roughly two hours, and finding that out only afterwards -- or not at all --
+    # is the difference between a plan and a gamble.
+    from soccermaster.model.data.extract_frames import probe_duration
+
+    duration = probe_duration(str(video_path))
+    if duration:
+        native_frames = int(duration * 25)  # a typical broadcast rate
+        if max_frames:
+            planned, rate = min(max_frames, native_frames), "native"
+        elif fps:
+            planned, rate = int(duration * fps), f"{fps} fps"
+        else:
+            planned, rate = native_frames, "native (all frames)"
+        # 0.373 s/frame measured on an L40S at 1 fps; setup is a few minutes on top.
+        estimate = planned * 0.373 / 3600
+        print(
+            f"plan     : {duration / 60:,.1f} min video, {planned:,} frames at {rate}"
+            f"\n           tracking is ~{estimate:,.2f} h at the measured 0.373 s/frame,"
+            f" plus a few minutes of setup",
+            flush=True,
+        )
+
     # `workers` was accepted and ignored. num_cores is the override that actually
     # controls dataloader workers, and doctor warns loudly when it exceeds the CPU count.
     extra = [f"num_cores={workers}"] if workers else None
 
+    started = time.time()
     try:
         result = sm.analyze_video(
             video_path,
@@ -541,8 +583,9 @@ def analyze(
             video_id=video_id,
             steps=list(steps),
             device="0",  # a single-GPU Modal worker; 0 is the visible device
-            write_video=True,
+            write_video=write_video,
             fps=fps,
+            max_frames=max_frames,
             extra_overrides=extra,
         )
     except Exception:
@@ -551,6 +594,7 @@ def analyze(
     # Read the exported data back so the caller gets it without a volume round-trip.
     payload: dict = {
         "gpu": gpu,
+        "minutes": round((time.time() - started) / 60, 1),
         "out_dir": str(result["out_dir"]),
         "exports": {k: str(v) for k, v in result["exports"].items()},
         "videos": [str(v) for v in result["videos"]],
@@ -594,6 +638,8 @@ def main(
     url: str = "",
     name: str = "",
     fps: float = 0.0,
+    max_frames: int = 0,
+    no_video: bool = False,
     steps: str = "1,3",
 ) -> None:
     """``modal run modal_app.py --cmd <doctor|gpu|net|prepare|video|videos|analyze|list|fetch>``"""
@@ -632,6 +678,8 @@ def main(
             video_id=video_id,
             steps=as_steps(),
             fps=fps or None,
+            max_frames=max_frames or None,
+            write_video=not no_video,
         )
         print(json.dumps(result, indent=2, default=str)[:8000])
     elif cmd == "fetch":
