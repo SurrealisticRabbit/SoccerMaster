@@ -101,11 +101,10 @@ REPO = "https://github.com/SurrealisticRabbit/SoccerMaster.git"
 #: uploaded from local disk on every run, so edits here take effect immediately.
 #: Bump this when anything under ``src/`` changes, or the image keeps serving the old
 #: package: Modal caches layers by definition string and this is what makes it specific.
-#: Current value carries the step-3 blockers found by running it: device plumbing that set
-#: CUDA_VISIBLE_DEVICES to a torch device name, step 2 handing "cuda" to sam2's int(), the
-#: silent empty result, and the tracklet-attribute dtype that failed at the first
-#: MajorityVoteTrackletFilter -- plus the visualizer guard for an empty detections frame.
-REF = "5bb81c5b066666e3ff80f8d6463d3798c2679c75"
+#: Current value carries the step-2 work: the Hydra initialisation and config-name
+#: resolution that made it possible for step 2 to start at all, the reachable
+#: --max_processes_per_gpu, the manifest's sam2 yaml, and the device-plumbing fixes.
+REF = "d464b39ee5175cb54c09738b0c6fbdb31883609d"
 
 #: Local directory the exported data is written back to by ``--cmd fetch``.
 LOCAL_OUTPUT_DIR = Path("modal-outputs")
