@@ -104,7 +104,7 @@ REPO = "https://github.com/SurrealisticRabbit/SoccerMaster.git"
 #: Current value carries the step-2 work: the Hydra initialisation and config-name
 #: resolution that made it possible for step 2 to start at all, the reachable
 #: --max_processes_per_gpu, the manifest's sam2 yaml, and the device-plumbing fixes.
-REF = "47a4361238341c7ea9e556d92db5adc473fa2b62"
+REF = "64a33daf620d8e8ffa05d2eb656a0796465d927c"
 
 #: Local directory the exported data is written back to by ``--cmd fetch``.
 LOCAL_OUTPUT_DIR = Path("modal-outputs")
@@ -143,12 +143,20 @@ image = (
     # SAM 2 lives in the repo at third_party/sam2 and is deliberately NOT part of the
     # wheel, so step 2 needs it from the subdirectory. Without this, `import sam2` fails
     # inside sam2_refine and step 2 cannot start at all.
+    #
+    # The requirement name must be `sam-2`, matching the vendored setup.py's
+    # NAME = "SAM-2" -- NOT the import name `sam2`. pip checks the two agree and fails the
+    # build otherwise:
+    #   has inconsistent name: expected 'sam2', but metadata has 'sam-2'
+    # The dist name and the import name really do differ here, which is what makes it easy
+    # to get wrong; sam-2 is a distribution, sam2 is the package directory.
+    #
     # SAM2_BUILD_CUDA=0 because debian_slim has no nvcc: setup.py would catch the failed
     # extension build and warn, so it is safe either way, but skipping it avoids a compile
     # attempt that can only fail. The extension accelerates mask connected-components; the
     # video predictor works without it.
     .pip_install(
-        f"sam2 @ git+{REPO}@{REF}#subdirectory=third_party/sam2",
+        f"sam-2 @ git+{REPO}@{REF}#subdirectory=third_party/sam2",
         env={"SAM2_BUILD_CUDA": "0"},
     )
 )
