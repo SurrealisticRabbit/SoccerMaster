@@ -93,19 +93,24 @@ sam2 = [
     # wheel -- packages are discovered under src/ only, so the vendored tree ships in the
     # sdist but is never installed. It therefore has to be requested from the repository
     # subdirectory, otherwise `import sam2` fails in soccermaster/sam2_refine and step 2
-    # cannot start. Previously this extra declared only iopath, so installing it looked
-    # like it had enabled step 2 while nothing provided the package.
+    # cannot start.
     #
-    # SAM2_BUILD_CUDA=0 is recommended: the CUDA extension needs nvcc, which most hosts
-    # (including the Modal image) lack. setup.py catches a failed build and warns rather
-    # than failing, so this degrades gracefully, but skipping the attempt saves a pointless
-    # compile. The extension accelerates mask connected-components; the video predictor
-    # works without it.
+    # The distribution name is `sam-2`, NOT `sam2`. The vendored setup.py declares
+    # NAME = "SAM-2", and pip requires the requested name to match the target's metadata::
+    #
+    #   Generating metadata for package sam2 produced metadata for project name sam-2
+    #   ... has inconsistent name: expected 'sam2', but metadata has 'sam-2'
+    #   ERROR: No matching distribution found for sam2
+    #
+    # which fails the image build. Confusing because the *import* name IS `sam2` -- the
+    # package directory is sam2/ -- so the two genuinely differ here and only the
+    # distribution name belongs in a requirement.
+    #
     # Pinned to a commit rather than a branch so an install is reproducible: the vendored
     # tree is Meta's unmodified SAM 2 and will not need updating, so a moving ref buys
-    # nothing and costs the ability to say what was installed. This SHA is a pushed commit
-    # of this repository that contains third_party/sam2.
-    "sam2 @ git+https://github.com/SurrealisticRabbit/SoccerMaster@5bb81c5b066666e3ff80f8d6463d3798c2679c75#subdirectory=third_party/sam2",
+    # nothing. The SHA only needs to be a pushed commit containing third_party/sam2; it
+    # does not have to be this repository's current tip.
+    "sam-2 @ git+https://github.com/SurrealisticRabbit/SoccerMaster@47a4361238341c7ea9e556d92db5adc473fa2b62#subdirectory=third_party/sam2",
 ]
 # TVCalib calibration backend (not used by the default nbjw_calib configs).
 tvcalib = [
