@@ -24,6 +24,21 @@ from soccermaster.soccernet_gamestate.plugins.calibration.nbjw_calib.utils.utils
 from soccermaster.soccernet_gamestate.plugins.calibration.nbjw_calib.utils.utils_calib import FramebyFrameCalib
 from scipy.signal import savgol_filter
 
+def _row_value(metadatas: pd.DataFrame, column: str):
+    """The value of ``column`` for the row being processed, positionally.
+
+    These calibration modules are constructed with ``batch_size=1``, so "the first row"
+    is "the row". The original code wrote ``metadatas[column][0]``, which is *label*
+    lookup against the batch's index -- and that index is the image ids from the tracker
+    state (values like ``10007000001``), not a 0-based range, so there is no label ``0``
+    and it raised ``KeyError: 0``. Step 3 died on this before any calibration happened.
+
+    `.iloc[0]` is what the same method already used correctly a few lines further down
+    for ``metadatas.iloc[0].name``, so this restores consistency as well as correctness.
+    """
+    return metadatas[column].iloc[0]
+
+
 def kp_to_line(keypoints):
     line_keypoints_match = {"Big rect. left bottom": [24, 68, 25],
                             "Big rect. left main": [5, 64, 31, 46, 34, 66, 25],
@@ -176,7 +191,7 @@ class NBJW_Calib(ImageLevelModule):
         return image
 
     def process(self, batch: Any, detections: pd.DataFrame, metadatas: pd.DataFrame):
-        predictions = metadatas["keypoints"][0]
+        predictions = _row_value(metadatas, "keypoints")
 
         self.cam.update(predictions)
         h = self.cam.get_homography_from_ground_plane(use_ransac=50, inverse=True)
@@ -229,7 +244,7 @@ class NBJW_Calib_Decoupled(ImageLevelModule):
         return image
 
     def process(self, batch: Any, detections: pd.DataFrame, metadatas: pd.DataFrame):
-        predictions = metadatas["keypoints"][0]
+        predictions = _row_value(metadatas, "keypoints")
 
         self.cam.update(predictions)
         h = self.cam.get_homography_from_ground_plane(use_ransac=50, inverse=True)
@@ -275,9 +290,9 @@ class ApplyParameters(ImageLevelModule):
         return image
 
     def process(self, batch: Any, detections: pd.DataFrame, metadatas: pd.DataFrame):
-        h = metadatas["h"][0]
-        cam_params = metadatas["parameters"][0]
-        
+        h = _row_value(metadatas, "h")
+        cam_params = _row_value(metadatas, "parameters")
+
         # Use previous homography/params if current ones are not available
         if self.use_prev_homography and ((self.use_h and (h is None or np.any(np.isnan(h)))) or (not self.use_h and 'x_focal_length' not in cam_params)):
             h = self.last_h
@@ -340,8 +355,8 @@ class GetPitchCorners(ImageLevelModule):
         return image
 
     def process(self, batch: Any, detections: pd.DataFrame, metadatas: pd.DataFrame):
-        h = metadatas["h"][0]
-        cam_params = metadatas["parameters"][0]
+        h = _row_value(metadatas, "h")
+        cam_params = _row_value(metadatas, "parameters")
         image_corners = np.array([[0, 0], [self.image_width, 0], [self.image_width, self.image_height], [0, self.image_height]]) # 左上，右上，右下，左下
         
         # Use previous homography/params if current ones are not available
