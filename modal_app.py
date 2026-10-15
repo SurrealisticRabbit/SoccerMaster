@@ -49,6 +49,27 @@ refetches anything that does not match. Check locally first with ``md5sum``/``ce
 ``--cmd net`` measures throughput from the container per host, which distinguishes a slow
 origin from a slow container.
 
+What costs money and what does not
+----------------------------------
+Only running containers cost anything, and GPU time is what costs most. With nothing
+running the bill stops: ``min_containers`` defaults to 0, so nothing is kept warm.
+
+Storage is not a reason to fetch promptly. Volumes are **$0.09/GiB/month with 1 TiB
+included**, and these three volumes total roughly 23 GiB (weights ~20, outputs ~1.2,
+video 1.6), so leaving results in place overnight costs nothing. Usage is measured by a
+once-daily snapshot, and deleting data can still be billed for up to four days, so
+tidying up is not an instant saving either.
+
+Two things worth knowing about a run's cost:
+
+* the container is billed for its *lifetime*, not for GPU utilisation, so a slow weight
+  download or an ffmpeg decode is paid for at GPU rates while the card sits idle;
+* ``scaledown_window`` defaults to 60s, so every run carries a short billed tail after it
+  returns.
+
+Pass ``write_video=False`` for a long run to skip several GB of CPU work on a GPU-priced
+container.
+
 ``doctor`` has been run against the real app. The rest has not, so expect to fix one or
 two things on first use.
 """
@@ -80,10 +101,9 @@ REPO = "https://github.com/SurrealisticRabbit/SoccerMaster.git"
 #: uploaded from local disk on every run, so edits here take effect immediately.
 #: Bump this when anything under ``src/`` changes, or the image keeps serving the old
 #: package: Modal caches layers by definition string and this is what makes it specific.
-#: Current value carries the pandas 3 fix for merge_dataframes, which is what killed the
-#: first run against real footage: string track ids were being written into a column that
-#: NaN seeding had made float64.
-REF = "2a3b7032d5b4be05e0ff63c9164b75d270e04dd5"
+#: Current value carries ffmpeg progress streaming, the ``max_frames`` native-rate slice,
+#: and the ``_run`` heartbeat.
+REF = "3336298eb014b849c0557bd48e9ac550da12d315"
 
 #: Local directory the exported data is written back to by ``--cmd fetch``.
 LOCAL_OUTPUT_DIR = Path("modal-outputs")
