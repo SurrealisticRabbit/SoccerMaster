@@ -8,6 +8,7 @@ import numpy as np
 from tqdm import tqdm
 from soccermaster.tracklab.utils.cv2 import cv2_load_image, crop_bbox_ltwh
 from soccermaster.tracklab.utils.attribute_voting import select_highest_voted_att
+from soccermaster.tracklab.utils.dataframe_compat import ensure_object_column
 
 from soccermaster.tracklab.pipeline.videolevel_module import VideoLevelModule
 from soccermaster.tracklab.utils.openmmlab import get_checkpoint
@@ -37,6 +38,9 @@ class MajorityVoteTracklet(VideoLevelModule):
     def process(self, detections: pd.DataFrame, metadatas: pd.DataFrame):
         
         detections[self.output_columns] = np.nan
+        # See the note in soccermaster.tracklab.utils.dataframe_compat: these columns take
+        # non-numeric tracklet attributes, so they cannot be float64.
+        ensure_object_column(detections, self.output_columns)
         
         if "track_id" not in detections.columns:
             return detections

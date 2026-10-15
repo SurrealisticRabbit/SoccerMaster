@@ -2,6 +2,7 @@ import pandas as pd
 import torch
 import numpy as np
 from soccermaster.tracklab.utils.attribute_voting import select_highest_voted_att
+from soccermaster.tracklab.utils.dataframe_compat import ensure_object_column
 
 from soccermaster.tracklab.pipeline.videolevel_module import VideoLevelModule
 
@@ -21,6 +22,9 @@ class VotingTrackletJerseyNumber(VideoLevelModule):
     def process(self, detections: pd.DataFrame, metadatas: pd.DataFrame):
 
         detections["jn_tracklet"] = [np.nan] * len(detections)
+        # float64 above, but a jersey number is not a number to pandas -- it is a string or
+        # an int, and it is None when a tracklet has no agreed number.
+        ensure_object_column(detections, "jn_tracklet")
         if "track_id" not in detections.columns:
             return detections
         for track_id in detections.track_id.unique():

@@ -8,6 +8,7 @@ import numpy as np
 from tqdm import tqdm
 from soccermaster.tracklab.utils.cv2 import cv2_load_image, crop_bbox_ltwh
 from soccermaster.tracklab.utils.attribute_voting import select_highest_voted_att
+from soccermaster.tracklab.utils.dataframe_compat import ensure_object_column
 
 from soccermaster.tracklab.pipeline.videolevel_module import VideoLevelModule
 from soccermaster.tracklab.utils.openmmlab import get_checkpoint
@@ -36,6 +37,10 @@ class MajorityVoteTrackletFilter(VideoLevelModule):
     def process(self, detections: pd.DataFrame, metadatas: pd.DataFrame):
         
         detections[self.output_columns] = np.nan
+        # NaN above makes these float64, but the values written below are jersey numbers,
+        # roles and team labels with None for an undecided tracklet. pandas 3 refuses that
+        # assignment into a numeric column; object is the honest dtype.
+        ensure_object_column(detections, self.output_columns)
         
         if "track_id" not in detections.columns:
             return detections
