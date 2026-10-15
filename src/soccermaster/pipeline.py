@@ -344,16 +344,34 @@ def run_step2(
     sam_checkpoint: Path | None = None,
     sam_config: str | None = None,
     extra_args: Sequence[str] = (),
+    processes_per_gpu: int = 1,
 ) -> Path:
     """SAM 2 segmentation refinement. Requires the optional ``sam2`` extra.
 
     Writes ``<out_dir>/step2/refined_<step1 name>`` and returns its path.
+
+    This is the one step in the pipeline that is natively parallel: ``sam2_refine`` runs a
+    process pool of ``len(gpus) * processes_per_gpu`` workers with dynamic GPU assignment.
+    Steps 1 and 3 are single-process and gain nothing from more than one card, so this
+    argument is where extra GPUs actually pay off -- pass ``device="0,1,2,3"`` with
+    ``processes_per_gpu=1`` for four cards.
+
+    Upstream's default config value is ``"configs/sam2.1/sam2.1_hiera_l.yaml"``, a path
+    relative to the SAM 2 package; ``soccermaster.sam2_refine`` normalises it to the config
+    *name* Hydra expects, so either form works here.
     """
     refine_dir = (out_dir / STEP2_DIR).resolve()
     refine_dir.mkdir(parents=True, exist_ok=True)
     refined = refine_dir / f"refined_{step1_state.name}"
 
-    checkpoint = sam_checkpoint or (paths.weights_dir() / "sam2" / "sam2.1_hiera_large.pt")
+    # Must agree with the manifest's destination and sam2_refine.DEFAULT_CHECKPOINT_NAME.
+    # A mismatch here is invisible until a GPU run, which is exactly how the yolo rename
+    # caused a silent failure once already.
+    from soccermaster.sam2_refine import DEFAULT_CHECKPOINT_NAME
+
+    checkpoint = sam_checkpoint or (
+        paths.weights_dir() / "sam2" / DEFAULT_CHECKPOINT_NAME
+    )
     config = sam_config or "configs/sam2.1/sam2.1_hiera_l.yaml"
 
     command = [
@@ -374,6 +392,12 @@ def run_step2(
         config,
         "--gpu_list",
         _gpu_index_list(device),
+        # Carried through so step 2's actual parallelism is reachable. Without this the
+        # module's process pool was always one worker per GPU and the argument could not be
+        # set from any public entry point, which made the only natively multi-GPU step in
+        # the pipeline effectively single-threaded.
+        "--max_processes_per_gpu",
+        str(processes_per_gpu),
         "--save_refined_pklz",
         "--save_pklz_path",
         str(refined),
