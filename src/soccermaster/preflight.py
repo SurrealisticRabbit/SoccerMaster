@@ -357,13 +357,20 @@ def check_dataset(dataset: str | None, steps: list[int], report: Report) -> None
     report.note("to turn a video into frames: "
                 "python -m soccermaster.model.data.extract_frames --help")
 
-    # sequences_info.json is read by the SAM 2 step only; steps 1 and 3 discover
-    # sequences by listing the split directory.
+    # sequences_info.json is read by SAM 2 only, and only when it is asked to work out the
+    # video list from the dataset metadata. `run_step2` always passes an explicit
+    # --video_id_list, and inside sam2_refine that is the FIRST branch checked, so the
+    # metadata file is never consulted on this path -- the previous wording ("step 2 needs
+    # it") sent you looking for a file that step 2 does not read.
     info = root / "sequences_info.json"
     if info.is_file():
-        report.ok(f"sequences_info.json present")
+        report.ok("sequences_info.json present")
     elif 2 in steps:
-        report.warn("sequences_info.json missing; step 2 needs it")
+        report.note(
+            "sequences_info.json missing; step 2 does not need it when given an explicit "
+            "video list, which the pipeline always does. It is only read when SAM 2 is "
+            "driven directly with --dataset_root and no --video_id_list."
+        )
     else:
         report.note("sequences_info.json missing; not needed for steps 1 and 3")
 
