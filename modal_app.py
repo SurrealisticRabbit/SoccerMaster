@@ -636,6 +636,94 @@ def analyze(
     return json_safe(payload)
 
 
+def sync_outputs(sub_path: str = "", force: bool = False) -> dict:
+    """Download only the files that are missing or a different size.
+
+    Replaces a call to ``modal volume get <volume> / <dir>``, which failed outright the
+    second time it was run -- it refuses an existing output directory, and the documented
+    escape hatch (``--force``) re-downloads everything. On a tree containing a few GB of
+    annotated video that is the wrong trade either way: either nothing is fetched, or all
+    of it is.
+
+    Sizes are the comparison rather than modification times, because a size difference is
+    what a truncated download actually looks like, and mtime comparisons across a volume
+    and a local filesystem invite clock-skew false positives. A file whose size differs is
+    re-fetched, so a previously interrupted sync heals itself.
+
+    ``sub_path`` scopes the sync to part of the tree -- ``--path modal/data`` fetches the
+    CSVs and JSON without pulling the videos.
+
+    Note this is a *pull*, so it never deletes anything local; files removed remotely will
+    linger locally.
+    """
+    from pathlib import Path
+
+    prefix = sub_path.strip("/")
+    local_root = LOCAL_OUTPUT_DIR
+    # Paths, not display strings: the return value is data a caller may want to act on,
+    # so the human-readable sizes are reported separately below rather than baked in.
+    fetched: list[str] = []
+    skipped: list[str] = []
+    failed: list[str] = []
+    sizes: dict[str, int] = {}
+    transferred = 0
+
+    # listdir is a synchronous RPC and returns FileEntry(path, type, mtime, size), so no
+    # per-file subprocess and no async plumbing.
+    entries = outputs_volume.listdir("/", recursive=True)
+    wanted = []
+    for entry in entries:
+        if getattr(entry, "type", "file") != "file":
+            continue
+        relative = str(entry.path).lstrip("/")
+        if prefix and not relative.startswith(prefix):
+            continue
+        wanted.append((relative, entry))
+
+    print(f"remote: {len(wanted)} file(s) under '/{prefix}'" if prefix else
+          f"remote: {len(wanted)} file(s)", flush=True)
+
+    for relative, entry in wanted:
+        target = local_root / relative
+        if not force and target.is_file() and target.stat().st_size == entry.size:
+            skipped.append(relative)
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            # Sync and streaming, so a several-GB file does not arrive as one bytes
+            # object in memory.
+            with open(target, "wb") as handle:
+                written = outputs_volume.read_file_into_fileobj(entry.path, handle)
+            written = written or 0
+            transferred += written
+            sizes[relative] = written
+            fetched.append(relative)
+        except Exception as exc:  # noqa: BLE001 - one bad file should not stop the sync
+            failed.append(f"{relative}: {type(exc).__name__}: {exc}")
+
+    total = len(wanted)
+    print(
+        f"\n{len(fetched)} fetched, {len(skipped)} already up to date"
+        + (f", {len(failed)} failed" if failed else "")
+        + f" (of {total})",
+        flush=True,
+    )
+    if transferred:
+        print(f"transferred {transferred / 1e6:,.1f} MB", flush=True)
+    for name in fetched:
+        print(f"  + {name}  ({sizes.get(name, 0) / 1e6:,.1f} MB)")
+    for line in failed:
+        print(f"  ! {line}")
+
+    return {
+        "fetched": fetched,
+        "skipped": skipped,
+        "failed": failed,
+        "transferred_mb": round(transferred / 1e6, 1),
+        "local_root": str(local_root),
+    }
+
+
 @app.function(image=image, volumes=VOLUMES, env=ENV, timeout=1800)
 def list_outputs() -> list[str]:
     """Everything under the outputs volume, so nothing gets lost between sessions."""
@@ -660,11 +748,12 @@ def main(
     fps: float = 0.0,
     max_frames: int = 0,
     no_video: bool = False,
+    path: str = "",
+    force: bool = False,
     steps: str = "1,3",
 ) -> None:
     """``modal run modal_app.py --cmd <doctor|gpu|net|prepare|video|videos|analyze|list|fetch>``"""
     import json
-    import subprocess
 
     def as_steps() -> tuple[int, ...]:
         parts = [p.strip() for p in str(steps).replace("|", ",").split(",")]
@@ -703,14 +792,9 @@ def main(
         )
         print(json.dumps(result, indent=2, default=str)[:8000])
     elif cmd == "fetch":
-        # Shell out to the CLI rather than reaching for a volume API: `modal volume get`
-        # is the documented, stable way to pull a volume down, and it handles nesting.
-        LOCAL_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        proc = subprocess.run(
-            ["modal", "volume", "get", OUTPUTS_VOLUME_NAME, "/", str(LOCAL_OUTPUT_DIR)],
-            text=True,
-        )
-        print(f"\nexit {proc.returncode}; data is under {LOCAL_OUTPUT_DIR}/")
+        # A size-based sync rather than `modal volume get`, which refuses an existing
+        # output directory and whose --force re-downloads everything.
+        sync_outputs(sub_path=path, force=force)
     else:
         raise SystemExit(
             f"unknown cmd {cmd!r}; use doctor, gpu, net, prepare, video, videos, analyze, list or fetch"
